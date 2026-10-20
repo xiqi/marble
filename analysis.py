@@ -201,18 +201,23 @@ def build_facts(root: Path = Path(__file__).parent) -> tuple[dict, dict]:
             "discounts": Decimal(0), "quantity_sold": Decimal(0), "menu": {},
         })
     sales_rows = []
+    availability_conflicts = []
     for row in tables["pos_daily"]:
         day = date.fromisoformat(row["business_date"])
         if row["pos_item_id"] not in menu or not start <= day <= end:
             raise ValueError(f"{row['row_id']}: unknown item or date outside count period")
-        if day < date.fromisoformat(menu[row["pos_item_id"]]["available_from"]):
-            raise ValueError(f"{row['row_id']}: sale predates menu availability")
         values = {key: _number(row, key, row["row_id"]) for key in
                   ("net_sales", "gross_sales", "discounts", "quantity_sold")}
         if values["gross_sales"] - values["discounts"] != values["net_sales"]:
             raise ValueError(f"{row['row_id']}: gross minus discounts must equal net sales")
         week = weeks[(day - start).days // 7]
         item_id = row["pos_item_id"]
+        if values["quantity_sold"] > 0 and day < date.fromisoformat(menu[item_id]["available_from"]):
+            availability_conflicts.append({
+                "pos_item_id": item_id, "planned_available_from": menu[item_id]["available_from"],
+                "business_date": row["business_date"], "quantity_sold": values["quantity_sold"],
+                "sources": [refs[("menu", item_id)], refs[("pos_daily", row["row_id"])]],
+            })
         if item_id not in week["menu"]:
             group = f"sales.{week['id']}.{item_id}"
             evidence_sets[group] = [refs[("menu", item_id)]]
@@ -278,7 +283,6 @@ def build_facts(root: Path = Path(__file__).parent) -> tuple[dict, dict]:
     if "INV-099" not in headers:
         raise ValueError("invoice_headers: missing mapped disputed invoice INV-099")
     invoice_lines = defaultdict(list)
-    normalized_lines = []
     anomalies = []
     for row in tables["invoice_lines"]:
         if row["invoice_id"] not in headers:
@@ -307,11 +311,10 @@ def build_facts(root: Path = Path(__file__).parent) -> tuple[dict, dict]:
         }
         if product["catalog_row_id"] == "CAT-CHICKEN20":
             line["sources"] += [refs[("vendor_catalog", "CAT-CHICKEN")], "GM_OPS_LOG.md#N11"]
-        normalized_lines.append(line)
         invoice_lines[row["invoice_id"]].append(line)
         if quantity * price != amount:
             anomalies.append({
-                "kind": "line_arithmetic_mismatch", "invoice_id": row["invoice_id"],
+                "kind": "line_arithmetic_mismatch", "invoice_id": row["invoice_id"], "row_id": row["row_id"],
                 "recorded_amount": amount, "quantity_times_price": quantity * price,
                 "difference": amount - quantity * price, "sources": line["sources"],
             })
@@ -345,6 +348,9 @@ def build_facts(root: Path = Path(__file__).parent) -> tuple[dict, dict]:
         group = f"invoice.{invoice_id}"
         evidence_sets[group] = list(dict.fromkeys(reference for line in invoice_lines[invoice_id] for reference in line["sources"]))
         if reasons:
+            evidence_sets[group] += ["SITE_PROFILE.md#time-context", "SITE_PROFILE.md#kitchen-conventions"]
+            if invoice_id == "INV-099":
+                evidence_sets[group].append("GM_OPS_LOG.md#N15")
             excluded.append({
                 "invoice_id": invoice_id, "invoice_date": header["invoice_date"],
                 "delivery_date": header["delivery_date"], "source_status": header["status"],
@@ -488,8 +494,11 @@ def build_facts(root: Path = Path(__file__).parent) -> tuple[dict, dict]:
                 if item_id not in unmodeled:
                     unmodeled[item_id] = {
                         "name": menu[item_id]["name"], "quantity_sold": Decimal(0), "net_sales": Decimal(0),
-                        "sources": [refs[("menu", item_id)], "GM_OPS_LOG.md#N10"],
+                        "sources": [refs[("menu", item_id)]] +
+                        [refs[("recipes", recipe["row_id"])] for recipe in recipes[item_id]],
                     }
+                    if item_id == "M99":
+                        unmodeled[item_id]["sources"].append("GM_OPS_LOG.md#N10")
                 unmodeled[item_id]["quantity_sold"] += sale["values"]["quantity_sold"]
                 unmodeled[item_id]["net_sales"] += sale["values"]["net_sales"]
                 unmodeled[item_id]["sources"].append(refs[("pos_daily", sale["row_id"])])
@@ -577,7 +586,7 @@ def build_facts(root: Path = Path(__file__).parent) -> tuple[dict, dict]:
         },
         "sales": {
             "basis": "Net sales exclude tax and tips. Quantities are fulfilled menu portions, not customers.",
-            "weeks": weeks, "changes": changes,
+            "weeks": weeks, "changes": changes, "planned_availability_conflicts": availability_conflicts,
         },
         "purchasing": {
             "basis": "Recorded invoice line purchases / net sales, assigned by delivery_date; excludes future and disputed receipts. Not COGS or gross margin.",

@@ -52,6 +52,8 @@ unweighed waste prevent attribution of unexplained usage; do not blame an employ
 Opening/closing counts are snapshots, not live inventory. Do not add old purchases
 again to closing stock. Do not count future/unconfirmed deliveries as confirmed
 on-hand stock; an unconfirmed receipt is not proof that the stock is absent.
+Distinguish counted stock from an additional unconfirmed receipt: qualify the
+receipt as unconfirmed, not the ingredient's entire recorded inventory.
 Restocking gaps are conditional baseline scenarios, not forecasts or confirmed orders.
 Do not assume future market attendance, extra demand, vendor capacity, or unknown cutoffs.
 Never claim a future delivery covers consumption before it arrives; a delivery

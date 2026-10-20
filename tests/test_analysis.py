@@ -25,6 +25,7 @@ class AnalysisTests(unittest.TestCase):
         self.assertEqual(change["net_sales"], {"absolute": "110.5", "percent": "0.9782"})
         self.assertEqual(change["menu"]["M05"]["quantity_sold"]["absolute"], "8")
         self.assertIsNone(self.facts["sales"]["changes"][0]["menu"]["M05"]["net_sales"]["percent"])
+        self.assertEqual(self.facts["sales"]["planned_availability_conflicts"], [])
 
     def test_purchases_keep_conflicting_totals_and_exclude_future_receipt(self):
         weeks = self.facts["purchasing"]["weeks"]
@@ -36,6 +37,13 @@ class AnalysisTests(unittest.TestCase):
         self.assertEqual([item["invoice_id"] for item in excluded], ["INV-099"])
         self.assertEqual(excluded[0]["items"][0]["quantity"], "40")
         self.assertIn("GM_OPS_LOG.md#N15", excluded[0]["sources"])
+        self.assertEqual(len(excluded[0]["evidence_sets"]), 1)
+        inputs = self.facts["evidence_sets"][excluded[0]["evidence_sets"][0]]
+        self.assertTrue({
+            "GM_OPS_LOG.md#N15", "SITE_PROFILE.md#time-context", "SITE_PROFILE.md#kitchen-conventions",
+            "data/invoice_headers.csv#INV-099", "data/invoice_lines.csv#INV-099-L01",
+            "data/vendor_catalog.csv#CAT-CHICKEN20", "GM_OPS_LOG.md#N11",
+        }.issubset(inputs))
 
     def test_vendor_alias_pack_change_and_direct_pound_invoice(self):
         chicken = "Chicken thigh boneless skinless"
@@ -247,6 +255,62 @@ class AnalysisTests(unittest.TestCase):
         eggs = facts["consumption"]["ingredients"]["Large shell eggs"]
         self.assertEqual(eggs["known_recipe_usage"], "664")
         self.assertEqual(facts["restocking"]["scenarios"][1]["ingredients"]["Large shell eggs"]["known_recipe_demand"], "408")
+
+    def test_missing_effective_recipe_does_not_use_the_specials_note(self):
+        def mutate(rows):
+            for row in rows:
+                if row["pos_item_id"] == "M05":
+                    row["effective_from"] = "2026-10-03"
+
+        facts, sources = self.mutated_facts("recipes", mutate)
+        missing = facts["consumption"]["missing_recipes"]["M05"]
+        self.assertEqual((missing["quantity_sold"], missing["net_sales"]), ("128", "1152"))
+        self.assertEqual(facts["consumption"]["ingredients"]["Large shell eggs"]["known_recipe_usage"], "272")
+        inputs = facts["evidence_sets"][missing["evidence_sets"][0]]
+        self.assertEqual(inputs, missing["sources"])
+        self.assertNotIn("GM_OPS_LOG.md#N10", inputs)
+        self.assertIn("data/menu.csv#M05", inputs)
+        self.assertIn("data/pos_daily.csv#POS-13-M05", inputs)
+        self.assertIn("data/pos_daily.csv#POS-14-M05", inputs)
+        self.assertNotIn("data/pos_daily.csv#POS-20-M05", inputs)
+        recipe_refs = {
+            reference for reference, source in sources.items()
+            if source["file"] == "data/recipes.csv" and source["content"]["pos_item_id"] == "M05"
+        }
+        self.assertTrue(recipe_refs.issubset(inputs))
+        self.assertIn("GM_OPS_LOG.md#N10", facts["consumption"]["missing_recipes"]["M99"]["sources"])
+
+    def test_sales_before_planned_availability_remain_in_totals_and_show_conflict(self):
+        def mutate(rows):
+            next(row for row in rows if row["pos_item_id"] == "M05")["available_from"] = "2026-10-03"
+
+        facts, sources = self.mutated_facts("menu", mutate)
+        self.assertEqual(facts["sales"]["weeks"], self.facts["sales"]["weeks"])
+        self.assertEqual(facts["consumption"], self.facts["consumption"])
+        conflicts = facts["sales"]["planned_availability_conflicts"]
+        self.assertEqual([(row["business_date"], row["quantity_sold"]) for row in conflicts],
+                         [("2026-09-26", "62"), ("2026-09-27", "66")])
+        for conflict, pos_id in zip(conflicts, ("POS-13-M05", "POS-14-M05")):
+            self.assertEqual(conflict["pos_item_id"], "M05")
+            self.assertEqual(conflict["planned_available_from"], "2026-10-03")
+            self.assertEqual(conflict["sources"], ["data/menu.csv#M05", f"data/pos_daily.csv#{pos_id}"])
+            self.assertEqual(sources[conflict["sources"][1]]["content"]["business_date"], conflict["business_date"])
+
+    def test_multiple_line_mismatches_keep_their_own_evidence(self):
+        def mutate(rows):
+            next(row for row in rows if row["row_id"] == "INV-001-L01")["line_total"] = "257.00"
+            next(row for row in rows if row["row_id"] == "INV-001-L02")["line_total"] = "73.00"
+
+        facts, _ = self.mutated_facts("invoice_lines", mutate)
+        anomalies = [row for row in facts["purchasing"]["anomalies"] if row["kind"] == "line_arithmetic_mismatch"]
+        self.assertEqual({row["row_id"] for row in anomalies}, {"INV-001-L01", "INV-001-L02"})
+        self.assertEqual(len({row["evidence_sets"][0] for row in anomalies}), 2)
+        for anomaly in anomalies:
+            self.assertEqual(anomaly["difference"], "1")
+            inputs = facts["evidence_sets"][anomaly["evidence_sets"][0]]
+            self.assertEqual(inputs, anomaly["sources"])
+            line_refs = [reference for reference in inputs if reference.startswith("data/invoice_lines.csv#")]
+            self.assertEqual(line_refs, [f"data/invoice_lines.csv#{anomaly['row_id']}"])
 
     def test_invoice_date_does_not_choose_purchase_week(self):
         def mutate(rows):

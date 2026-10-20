@@ -105,6 +105,9 @@ with chat_tab:
     question = st.chat_input("What should I check before ordering?")
     retry = st.session_state.pop("retry_question", None)
     if question is not None or retry is not None:
+        if retry is not None and retry < len(st.session_state.messages) - 1:
+            question = st.session_state.messages[retry]["question"]
+            retry = None
         if retry is None:
             st.session_state.messages.append({
                 "question": question, "result": None, "error": None, "revision": revision,

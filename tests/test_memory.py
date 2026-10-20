@@ -4,6 +4,7 @@ import unittest
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
+from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
 from memory import BUSINESS_NOW, delivery_context, initialize, save_rule
@@ -161,6 +162,55 @@ class DeliveryMemoryTests(unittest.TestCase):
             {"GM_OPS_LOG.md#N09", "source_updates#UPD-001"},
         )
 
+    def test_future_known_cutoff_does_not_skip_earlier_unknown_windows(self):
+        update_id = self.update(
+            vendor_id="V2", weekdays=[0, 2, 4], effective_from="2026-10-12",
+            source_text="DEMO: From October 12, Juniper requires orders by noon the previous day.",
+        )
+        vendor = delivery_context(self.db)["vendors"][1]
+        self.assertFalse(vendor["cutoff_known"])
+        self.assertFalse(vendor["next_conflicted"])
+        self.assertIsNone(vendor["next_delivery"])
+        self.assertIsNone(vendor["deadline"])
+        self.assertIsNone(vendor["next_source_ref"])
+        self.assertEqual(vendor["upcoming_rules"][0]["source_ref"], f"source_updates#{update_id}")
+        self.assertEqual(vendor["upcoming_rules"][0]["next_delivery"], "2026-10-12")
+        self.assertEqual(vendor["upcoming_rules"][0]["deadline"], "2026-10-11T12:00:00-04:00")
+
+    def test_temporary_unknown_cutoff_blocks_a_later_known_window(self):
+        self.update(
+            weekdays=[1], lead_days=None, cutoff_time=None,
+            effective_from="2026-10-06", effective_to="2026-10-06",
+        )
+        alder = self.alder()
+        self.assertFalse(alder["conflicted"])
+        self.assertFalse(alder["next_conflicted"])
+        self.assertFalse(alder["cutoff_known"])
+        self.assertIsNone(alder["next_delivery"])
+        self.assertIsNone(alder["deadline"])
+        original = next(rule for rule in alder["upcoming_rules"] if rule["id"] == "N09-V1")
+        self.assertEqual(original["next_delivery"], "2026-10-07")
+        self.assertEqual(original["deadline"], "2026-10-06T12:00:00-04:00")
+
+    def test_future_unknown_cutoff_without_a_later_known_window_is_reported(self):
+        self.update(
+            lead_days=None, cutoff_time=None, effective_from="2026-10-06",
+        )
+        alder = self.alder()
+        self.assertEqual(alder["rules"][0]["cutoff_time"], "12:00")
+        self.assertFalse(alder["cutoff_known"])
+        self.assertIsNone(alder["next_delivery"])
+        self.assertIsNone(alder["deadline"])
+
+    def test_unknown_cutoff_without_an_earlier_delivery_does_not_block_known_window(self):
+        self.update(
+            weekdays=[3], lead_days=None, cutoff_time=None,
+            effective_from="2026-10-06", effective_to="2026-10-06",
+        )
+        alder = self.alder()
+        self.assertEqual(alder["next_delivery"], "2026-10-07")
+        self.assertEqual(alder["deadline"], "2026-10-06T12:00:00-04:00")
+
     def test_expiring_exception_restores_latest_permanent_rule(self):
         permanent_id = self.update()
         self.update(weekdays=[1], effective_to="2026-10-06")
@@ -248,6 +298,32 @@ class DeliveryMemoryTests(unittest.TestCase):
             ))
         self.assertEqual(len(set(ids)), 4)
         self.assertEqual(len(delivery_context(self.db)["sources"]), 4)
+
+    def test_rules_and_sources_share_a_snapshot_during_a_concurrent_update(self):
+        connect = sqlite3.connect
+        with connect(self.db) as connection:
+            connection.execute("PRAGMA journal_mode=WAL")
+        inserted = False
+
+        def reader_connection(*args, **kwargs):
+            connection = connect(*args, **kwargs)
+
+            def before_statement(statement):
+                nonlocal inserted
+                if statement.startswith("SELECT * FROM source_updates") and not inserted:
+                    inserted = True
+                    self.update()
+
+            connection.set_trace_callback(before_statement)
+            return connection
+
+        with patch("memory.sqlite3.connect", side_effect=reader_connection):
+            context = delivery_context(self.db)
+        self.assertTrue(inserted)
+        self.assertEqual(context["sources"], {})
+        self.assertEqual(context["vendors"][0]["next_delivery"], "2026-10-07")
+        self.assertEqual(len(context["history"]), 4)
+        self.assertEqual(self.alder()["next_delivery"], "2026-10-08")
 
 
 if __name__ == "__main__":

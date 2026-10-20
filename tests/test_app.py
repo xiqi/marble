@@ -122,6 +122,27 @@ class AppTests(unittest.TestCase):
         self.assertEqual(self.generate.call_count, 2)
         self.assertIsNotNone(self.app.session_state["brief"])
 
+    def test_retry_after_a_later_answer_preserves_history_and_appends_the_answer(self):
+        self.app.run()
+        self.generate.side_effect = OpenAIError("Simulated API failure")
+        self.app.chat_input[0].set_value("Why did purchases change?").run()
+        self.generate.side_effect = self.report
+        self.app.chat_input[0].set_value("What is the next delivery?").run()
+        later_answer = self.app.session_state["messages"][1]["result"]
+        next(button for button in self.app.button if button.label == "Retry this answer").click().run()
+
+        self.assertEqual(len(self.app.exception), 0)
+        self.assertEqual(self.generate.call_count, 4)
+        messages = self.app.session_state["messages"]
+        self.assertEqual(len(messages), 3)
+        self.assertIsNone(messages[0]["result"])
+        self.assertEqual(messages[1]["result"], later_answer)
+        self.assertIsNotNone(messages[2]["result"])
+        question, history = self.generate.call_args.args[2:]
+        self.assertEqual(question, "Why did purchases change?")
+        self.assertEqual(history[1], {"role": "user", "content": "What is the next delivery?"})
+        self.assertEqual(json.loads(history[2]["content"]), later_answer["report"])
+
     def test_correction_rebuilds_brief_and_marks_old_chat_as_historical(self):
         self.app.run()
         self.app.chat_input[0].set_value("When should I order from Alder?").run()

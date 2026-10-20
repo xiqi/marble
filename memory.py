@@ -175,6 +175,7 @@ def delivery_context(db_path: Path, now: datetime = BUSINESS_NOW) -> dict:
     today = now.date()
     with closing(sqlite3.connect(db_path)) as connection:
         connection.row_factory = sqlite3.Row
+        connection.execute("BEGIN")
         rules = []
         for row in connection.execute("SELECT * FROM delivery_rules ORDER BY rowid"):
             rule = dict(row)
@@ -214,10 +215,20 @@ def delivery_context(db_path: Path, now: datetime = BUSINESS_NOW) -> dict:
                 if end >= today and end < date.max:
                     boundaries.add(end + timedelta(days=1))
         boundaries = sorted(boundaries)
+        unknown_deliveries = []
         for index, start in enumerate(boundaries):
             end = boundaries[index + 1] if index + 1 < len(boundaries) else None
             for rule in _rules_on(vendor_rules, start):
                 if rule["lead_days"] is None or rule["cutoff_time"] is None:
+                    earliest = max(start, today + timedelta(days=rule["lead_days"] or 0))
+                    if rule["cutoff_time"] is not None and time.fromisoformat(rule["cutoff_time"]) <= now.time():
+                        earliest = max(earliest, today + timedelta(days=(rule["lead_days"] or 0) + 1))
+                    delivery = min(
+                        earliest + timedelta(days=(weekday - earliest.weekday()) % 7)
+                        for weekday in rule["weekdays"]
+                    )
+                    if end is None or delivery < end:
+                        unknown_deliveries.append(delivery)
                     continue
                 earliest = max(start, today + timedelta(days=rule["lead_days"]))
                 cutoff = time.fromisoformat(rule["cutoff_time"])
@@ -264,7 +275,10 @@ def delivery_context(db_path: Path, now: datetime = BUSINESS_NOW) -> dict:
                 if rule["id"] not in upcoming_ids:
                     next_rules.append(rule)
                     upcoming_ids.add(rule["id"])
-        safe_next = next_rule if not conflicted and not next_conflicted else None
+        unknown_before_next = bool(unknown_deliveries) and (
+            next_rule is None or min(unknown_deliveries) <= _date(next_rule["next_delivery"])
+        )
+        safe_next = next_rule if not conflicted and not next_conflicted and not unknown_before_next else None
         vendors.append({
             "vendor_id": vendor_id,
             "vendor_name": vendor_rules[0]["vendor_name"],
@@ -275,7 +289,7 @@ def delivery_context(db_path: Path, now: datetime = BUSINESS_NOW) -> dict:
             "today_is_delivery": (
                 today.weekday() in current[0]["weekdays"] if current and not conflicted else None
             ),
-            "cutoff_known": bool(current) and all(
+            "cutoff_known": not unknown_before_next and bool(current) and all(
                 rule["lead_days"] is not None and rule["cutoff_time"] is not None for rule in current
             ),
             "next_delivery": safe_next["next_delivery"] if safe_next is not None else None,
