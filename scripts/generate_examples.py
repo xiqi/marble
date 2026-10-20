@@ -286,6 +286,28 @@ def main():
                 delivery_history,
             )
 
+            save_rule(
+                db_path, vendor_id="V2", weekdays=[0, 2, 4], lead_days=1, cutoff_time="12:00",
+                effective_from="2026-10-12", effective_to=None, kind="correction",
+                source_text=(
+                    "SIMULATED DEMO MESSAGE, not an actual supplier update. From October 12, "
+                    "Juniper delivers Monday, Wednesday and Friday, with orders due at noon "
+                    "the previous day. This does not establish the cutoff before October 12."
+                ),
+            )
+            facts, sources, context = current_state(db_path)
+            memory_stage = "simulated-future-juniper-rule"
+            capture_stage(memory_stage)
+            call(
+                "source-wording-and-future-cutoff",
+                "Explain the pepper price comparison, distinguishing source observations from analysis. "
+                "When does the notebook first mention the Weekend special button, and what does that "
+                "establish about when it was added? Does the unconfirmed INV-099 mean no chicken "
+                "was counted? Finally, for the saved Juniper rule starting October 12, distinguish "
+                "the rule's effective date, delivery date and order deadline. Is that definitely "
+                "the next delivery we can still order for, or are earlier windows unknown?",
+            )
+
         alder = [next(vendor for vendor in stage["delivery"] if vendor["vendor_id"] == "V1") for stage in stages]
         checks = {
             "baseline_delivery_and_deadline": (
@@ -316,7 +338,7 @@ def main():
             "model_calls_in_this_artifact": 0,
             "explanation": (
                 "Actual build_facts and delivery_context outputs from an isolated temporary SQLite database. "
-                "The two input messages are explicitly simulated. This artifact contains no model responses. "
+                "The input messages are explicitly simulated. This artifact contains no model responses. "
                 "Restart launches a new Python process that initializes and reads the same persisted SQLite "
                 "database. The parent rebuilds the facts with that child's delivery_context output before "
                 "any live follow-up. No conversation is retained for the post-restart question."

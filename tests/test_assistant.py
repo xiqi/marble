@@ -50,7 +50,7 @@ class AssistantTests(unittest.TestCase):
             set(report_schema["$defs"]["SourcedClaim"]["properties"]["sources"]["items"]["enum"]),
             {"data/pos_daily.csv#P1", "set:week"},
         )
-        self.assertIn("CURRENT_FACTS", result["request"][1]["content"])
+        self.assertIn("APP_ANALYSIS", result["request"][1]["content"])
         self.assertEqual(result["request"][-1]["content"], "What changed?")
         self.assertEqual(result["estimated_cost_usd"], 0.003775)
 
