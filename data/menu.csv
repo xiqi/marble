@@ -1,0 +1,7 @@
+pos_item_id,name,menu_price,available_from,service
+M01,Citrus chicken bowl,12.5,2026-09-14,daily
+M02,Garden bowl,11,2026-09-14,daily
+M03,Chicken tacos,11.5,2026-09-14,daily
+M04,Cheese quesadilla,8.5,2026-09-14,daily
+M05,Breakfast tacos,9,2026-09-26,weekends
+M99,Weekend special,10,2026-09-26,weekends

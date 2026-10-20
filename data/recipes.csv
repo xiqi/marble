@@ -1,0 +1,25 @@
+row_id,pos_item_id,ingredient_name,quantity,unit,yield_portions,effective_from
+REC-M01-CHICKEN,M01,Chicken thigh boneless skinless,0.34,lb,1,2026-09-14
+REC-M01-RICE,M01,"Long grain rice, dry",0.12,lb,1,2026-09-14
+REC-M01-BEANS,M01,"Black beans, drained",0.1,lb,1,2026-09-14
+REC-M01-PEPPER,M01,"Mixed bell peppers, trimmed",0.06,lb,1,2026-09-14
+REC-M01-OIL,M01,Canola oil,0.015,lb,1,2026-09-14
+REC-M02-RICE,M02,"Long grain rice, dry",0.14,lb,1,2026-09-14
+REC-M02-BEANS,M02,"Black beans, drained",0.2,lb,1,2026-09-14
+REC-M02-PEPPER,M02,"Mixed bell peppers, trimmed",0.1,lb,1,2026-09-14
+REC-M02-AVOCADO,M02,Whole avocado,0.5,each,1,2026-09-14
+REC-M02-OIL,M02,Canola oil,0.015,lb,1,2026-09-14
+REC-M03-CHICKEN,M03,Chicken thigh boneless skinless,0.28,lb,1,2026-09-14
+REC-M03-TORTILLA,M03,6 inch flour tortilla,3,each,1,2026-09-14
+REC-M03-CHEESE,M03,Shredded cheddar,0.05,lb,1,2026-09-14
+REC-M03-PEPPER,M03,"Mixed bell peppers, trimmed",0.04,lb,1,2026-09-14
+REC-M03-OIL,M03,Canola oil,0.01,lb,1,2026-09-14
+REC-M04-TORTILLA,M04,6 inch flour tortilla,2,each,1,2026-09-14
+REC-M04-CHEESE,M04,Shredded cheddar,0.14,lb,1,2026-09-14
+REC-M04-BEANS,M04,"Black beans, drained",0.08,lb,1,2026-09-14
+REC-M04-OIL,M04,Canola oil,0.01,lb,1,2026-09-14
+REC-M05-EGG,M05,Large shell eggs,2,each,1,2026-09-26
+REC-M05-TORTILLA,M05,6 inch flour tortilla,2,each,1,2026-09-26
+REC-M05-CHEESE,M05,Shredded cheddar,0.06,lb,1,2026-09-26
+REC-M05-PEPPER,M05,"Mixed bell peppers, trimmed",0.04,lb,1,2026-09-26
+REC-M05-OIL,M05,Canola oil,0.015,lb,1,2026-09-26

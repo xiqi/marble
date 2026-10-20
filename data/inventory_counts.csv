@@ -1,0 +1,19 @@
+row_id,counted_at,ingredient_name,quantity,unit,counted_by,comment
+COUNT-OPEN-CHICKEN,2026-09-14T00:00:00-04:00,Chicken thigh boneless skinless,32,lb,Maya,includes dry storage and walk-in
+COUNT-OPEN-RICE,2026-09-14T00:00:00-04:00,"Long grain rice, dry",18,lb,Maya,includes dry storage and walk-in
+COUNT-OPEN-BEANS,2026-09-14T00:00:00-04:00,"Black beans, drained",16,lb,Maya,includes dry storage and walk-in
+COUNT-OPEN-PEPPER,2026-09-14T00:00:00-04:00,"Mixed bell peppers, trimmed",14,lb,Maya,includes dry storage and walk-in
+COUNT-OPEN-EGG,2026-09-14T00:00:00-04:00,Large shell eggs,72,each,Maya,includes dry storage and walk-in
+COUNT-OPEN-TORTILLA,2026-09-14T00:00:00-04:00,6 inch flour tortilla,160,each,Maya,includes dry storage and walk-in
+COUNT-OPEN-CHEESE,2026-09-14T00:00:00-04:00,Shredded cheddar,9,lb,Maya,includes dry storage and walk-in
+COUNT-OPEN-OIL,2026-09-14T00:00:00-04:00,Canola oil,8,lb,Maya,includes dry storage and walk-in
+COUNT-OPEN-AVOCADO,2026-09-14T00:00:00-04:00,Whole avocado,36,each,Maya,includes dry storage and walk-in
+COUNT-CLOSE-CHICKEN,2026-10-04T23:00:00-04:00,Chicken thigh boneless skinless,47.9,lb,Maya,includes dry storage and walk-in
+COUNT-CLOSE-RICE,2026-10-04T23:00:00-04:00,"Long grain rice, dry",42.84,lb,Maya,includes dry storage and walk-in
+COUNT-CLOSE-BEANS,2026-10-04T23:00:00-04:00,"Black beans, drained",27.94,lb,Maya,includes dry storage and walk-in
+COUNT-CLOSE-PEPPER,2026-10-04T23:00:00-04:00,"Mixed bell peppers, trimmed",25.74,lb,Maya,includes dry storage and walk-in
+COUNT-CLOSE-EGG,2026-10-04T23:00:00-04:00,Large shell eggs,84.0,each,Maya,includes dry storage and walk-in
+COUNT-CLOSE-TORTILLA,2026-10-04T23:00:00-04:00,6 inch flour tortilla,280.0,each,Maya,includes dry storage and walk-in
+COUNT-CLOSE-CHEESE,2026-10-04T23:00:00-04:00,Shredded cheddar,14.68,lb,Maya,includes dry storage and walk-in
+COUNT-CLOSE-OIL,2026-10-04T23:00:00-04:00,Canola oil,39.335,lb,Maya,includes dry storage and walk-in
+COUNT-CLOSE-AVOCADO,2026-10-04T23:00:00-04:00,Whole avocado,75.0,each,Maya,includes dry storage and walk-in

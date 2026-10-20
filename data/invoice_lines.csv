@@ -1,0 +1,43 @@
+row_id,invoice_id,sku,item_description,quantity,unit,unit_price,line_total
+INV-001-L01,INV-001,V1-CHICKEN,Chicken thigh boneless skinless,2,case,128.00,256.00
+INV-001-L02,INV-001,V1-CHEESE,Shredded cheddar,2,case,36.00,72.00
+INV-002-L01,INV-002,V2-PEPPER,"Mixed bell peppers, trimmed",2,case,21.00,42.00
+INV-002-L02,INV-002,V2-AVOCADO,Whole avocado,1,case,38.40,38.40
+INV-003-L01,INV-003,V3-RICE,"Long grain rice, dry",3,case,28.75,86.25
+INV-003-L02,INV-003,V3-BEANS,"Black beans, drained",8,case,16.80,134.40
+INV-003-L03,INV-003,V3-TORTILLA,6 inch flour tortilla,5,case,28.80,144.00
+INV-003-L04,INV-003,V3-OIL,Canola oil,1,case,42.00,42.00
+INV-004-L01,INV-004,V2-PEPPER,"Mixed bell peppers, trimmed",1,case,21.00,21.00
+INV-004-L02,INV-004,V2-AVOCADO,Whole avocado,1,case,38.40,38.40
+INV-005-L01,INV-005,V1-CHICKEN,Chicken thigh boneless skinless,3,case,128.00,384.00
+INV-005-L02,INV-005,V1-CHEESE,Shredded cheddar,2,case,36.00,72.00
+INV-006-L01,INV-006,V2-PEPPER,"Mixed bell peppers, trimmed",3,case,21.00,63.00
+INV-006-L02,INV-006,V2-AVOCADO,Whole avocado,1,case,38.40,38.40
+INV-007-L01,INV-007,V1-CHICKEN,Chicken thigh boneless skinless,80,lb,3.20,256.00
+INV-007-L02,INV-007,V1-CHEESE,Shredded cheddar,1,case,36.00,36.00
+INV-008-L01,INV-008,V2-PEPPER,"Mixed bell peppers, trimmed",1,case,21.00,21.00
+INV-009-L01,INV-009,V3-RICE,"Long grain rice, dry",3,case,28.75,86.25
+INV-009-L02,INV-009,V3-BEANS,"Black beans, drained",7,case,16.80,117.60
+INV-009-L03,INV-009,V3-TORTILLA,6 inch flour tortilla,5,case,28.80,144.00
+INV-010-L01,INV-010,V2-PEPPER,"Mixed bell peppers, trimmed",2,case,210.00,420.00
+INV-010-L02,INV-010,V2-AVOCADO,Whole avocado,1,case,38.40,38.40
+INV-011-L01,INV-011,V1-CHICKEN,Chicken thigh boneless skinless,2,case,128.00,256.00
+INV-011-L02,INV-011,V1-EGG,Large shell eggs,2,case,43.20,86.40
+INV-011-L03,INV-011,V1-CHEESE,Shredded cheddar,3,case,36.00,108.00
+INV-012-L01,INV-012,V2-PEPPER,"Mixed bell peppers, trimmed",2,case,21.00,42.00
+INV-012-L02,INV-012,V2-AVOCADO,Whole avocado,1,case,38.40,38.40
+INV-013-L01,INV-013,AW-CHK20,Chicken thighs B/S 20LB,3,case,73.00,219.00
+INV-013-L02,INV-013,V1-CHEESE,Shredded cheddar,1,case,36.00,36.00
+INV-014-L01,INV-014,V2-PEPPER,"Mixed bell peppers, trimmed",2,case,21.00,42.00
+INV-015-L01,INV-015,V3-RICE,"Long grain rice, dry",3,case,28.75,86.25
+INV-015-L02,INV-015,V3-BEANS,"Black beans, drained",7,case,16.80,117.60
+INV-015-L03,INV-015,V3-TORTILLA,6 inch flour tortilla,5,case,28.80,144.00
+INV-015-L04,INV-015,V3-OIL,Canola oil,1,case,42.00,42.00
+INV-016-L01,INV-016,AW-CHK20,Chicken thighs B/S 20LB,6,case,73.00,438.00
+INV-016-L02,INV-016,V1-EGG,Large shell eggs,1,case,43.20,43.20
+INV-016-L03,INV-016,V1-CHEESE,Shredded cheddar,3,case,36.00,108.00
+INV-017-L01,INV-017,V2-PEPPER,"Mixed bell peppers, trimmed",1,case,21.00,21.00
+INV-017-L02,INV-017,V2-AVOCADO,Whole avocado,1,case,38.40,38.40
+INV-018-L01,INV-018,V2-PEPPER,"Mixed bell peppers, trimmed",3,case,21.00,63.00
+INV-018-L02,INV-018,V2-AVOCADO,Whole avocado,1,case,38.40,38.40
+INV-099-L01,INV-099,AW-CHK20,Chicken thigh 20 lb,2,case,73.00,146.00

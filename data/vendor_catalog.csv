@@ -1,0 +1,11 @@
+catalog_row_id,vendor_id,sku,description,pack_quantity,pack_unit,order_unit
+CAT-CHICKEN,V1,V1-CHICKEN,Chicken thigh boneless skinless,40,lb,case
+CAT-RICE,V3,V3-RICE,"Long grain rice, dry",25,lb,case
+CAT-BEANS,V3,V3-BEANS,"Black beans, drained",12,lb,case
+CAT-PEPPER,V2,V2-PEPPER,"Mixed bell peppers, trimmed",10,lb,case
+CAT-EGG,V1,V1-EGG,Large shell eggs,180,each,case
+CAT-TORTILLA,V3,V3-TORTILLA,6 inch flour tortilla,240,each,case
+CAT-CHEESE,V1,V1-CHEESE,Shredded cheddar,10,lb,case
+CAT-OIL,V3,V3-OIL,Canola oil,35,lb,case
+CAT-AVOCADO,V2,V2-AVOCADO,Whole avocado,48,each,case
+CAT-CHICKEN20,V1,AW-CHK20,Bnls thigh / skin off 2 x 10lb,20,lb,case
