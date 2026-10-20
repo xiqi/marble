@@ -243,14 +243,23 @@ def delivery_context(db_path: Path, now: datetime = BUSINESS_NOW) -> dict:
         conflicted = len(signatures) > 1
         possibilities = [rule for rule in vendor_rules if rule["next_delivery"] is not None]
         next_rule = min(possibilities, key=lambda rule: rule["next_delivery"]) if possibilities else None
+        upcoming_days = [day for day in boundaries if day > today]
+        if next_rule is not None:
+            next_day = _date(next_rule["next_delivery"])
+            upcoming_days = [day for day in upcoming_days if day < next_day] + [next_day]
         next_conflicted = False
         next_rules = []
-        if next_rule is not None:
-            next_rules = _rules_on(vendor_rules, _date(next_rule["next_delivery"]))
-            next_conflicted = len({
+        upcoming_ids = set()
+        for day in upcoming_days:
+            applicable = _rules_on(vendor_rules, day)
+            next_conflicted |= len({
                 (tuple(rule["weekdays"]), rule["lead_days"], rule["cutoff_time"])
-                for rule in next_rules
+                for rule in applicable
             }) > 1
+            for rule in applicable:
+                if rule["id"] not in upcoming_ids:
+                    next_rules.append(rule)
+                    upcoming_ids.add(rule["id"])
         safe_next = next_rule if not conflicted and not next_conflicted else None
         vendors.append({
             "vendor_id": vendor_id,

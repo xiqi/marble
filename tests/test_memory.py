@@ -113,6 +113,39 @@ class DeliveryMemoryTests(unittest.TestCase):
             {"2026-10-07", "2026-10-08"},
         )
 
+    def test_future_conflict_is_visible_when_supplier_cutoff_is_unknown(self):
+        self.update(
+            vendor_id="V2", weekdays=[1], lead_days=None, cutoff_time=None,
+            effective_from="2026-10-06", kind="conflict",
+        )
+        vendor = next(
+            item for item in delivery_context(self.db)["vendors"] if item["vendor_id"] == "V2"
+        )
+        self.assertFalse(vendor["conflicted"])
+        self.assertTrue(vendor["next_conflicted"])
+        self.assertFalse(vendor["cutoff_known"])
+        self.assertIsNone(vendor["next_delivery"])
+        self.assertIsNone(vendor["deadline"])
+        self.assertEqual(
+            {rule["source_ref"] for rule in vendor["upcoming_rules"]},
+            {"data/vendors.csv#V2", "source_updates#UPD-001"},
+        )
+
+    def test_unknown_cutoff_conflict_before_known_delivery_is_not_skipped(self):
+        self.update(
+            weekdays=[1], lead_days=None, cutoff_time=None, kind="conflict",
+            effective_from="2026-10-06", effective_to="2026-10-06",
+        )
+        alder = self.alder()
+        self.assertFalse(alder["conflicted"])
+        self.assertTrue(alder["next_conflicted"])
+        self.assertIsNone(alder["next_delivery"])
+        self.assertIsNone(alder["deadline"])
+        self.assertEqual(
+            {rule["source_ref"] for rule in alder["upcoming_rules"]},
+            {"GM_OPS_LOG.md#N09", "source_updates#UPD-001"},
+        )
+
     def test_expiring_exception_restores_latest_permanent_rule(self):
         permanent_id = self.update()
         self.update(weekdays=[1], effective_to="2026-10-06")
