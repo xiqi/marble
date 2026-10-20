@@ -41,6 +41,8 @@ class DeliveryMemoryTests(unittest.TestCase):
         alder = self.alder()
         self.assertEqual(alder["next_delivery"], "2026-10-07")
         self.assertEqual(alder["deadline"], "2026-10-06T12:00:00-04:00")
+        self.assertEqual(alder["next_delivery_label"], "Wednesday, October 07, 2026")
+        self.assertEqual(alder["deadline_label"], "Tuesday, October 06, 2026 at 12:00 PM EDT")
         self.assertTrue(alder["today_is_delivery"])
         self.assertEqual([rule["source_ref"] for rule in alder["rules"]], ["GM_OPS_LOG.md#N09"])
         for vendor in context["vendors"]:
@@ -48,6 +50,8 @@ class DeliveryMemoryTests(unittest.TestCase):
                 self.assertFalse(vendor["cutoff_known"])
                 self.assertIsNone(vendor["next_delivery"])
                 self.assertIsNone(vendor["deadline"])
+                self.assertIsNone(vendor["next_delivery_label"])
+                self.assertIsNone(vendor["deadline_label"])
                 self.assertEqual(vendor["upcoming_rules"], [])
 
     def test_correction_survives_reinitialization_and_new_connections(self):
@@ -57,6 +61,8 @@ class DeliveryMemoryTests(unittest.TestCase):
         self.assertEqual(update_id, "UPD-001")
         self.assertEqual(alder["next_delivery"], "2026-10-08")
         self.assertEqual(alder["deadline"], "2026-10-07T12:00:00-04:00")
+        self.assertEqual(alder["next_delivery_label"], "Thursday, October 08, 2026")
+        self.assertEqual(alder["deadline_label"], "Wednesday, October 07, 2026 at 12:00 PM EDT")
         self.assertEqual(alder["next_source_ref"], "source_updates#UPD-001")
         context = delivery_context(self.db)
         self.assertIn("DEMO", context["sources"]["source_updates#UPD-001"]["content"])
@@ -70,9 +76,18 @@ class DeliveryMemoryTests(unittest.TestCase):
         self.assertEqual(len(alder["rules"]), 2)
         self.assertIsNone(alder["next_delivery"])
         self.assertIsNone(alder["deadline"])
+        self.assertIsNone(alder["next_delivery_label"])
+        self.assertIsNone(alder["deadline_label"])
         self.assertEqual(
             {rule["next_delivery"] for rule in alder["rules"]},
             {"2026-10-07", "2026-10-08"},
+        )
+        self.assertEqual(
+            {(rule["next_delivery_label"], rule["deadline_label"]) for rule in alder["rules"]},
+            {
+                ("Wednesday, October 07, 2026", "Tuesday, October 06, 2026 at 12:00 PM EDT"),
+                ("Thursday, October 08, 2026", "Wednesday, October 07, 2026 at 12:00 PM EDT"),
+            },
         )
         final_id = self.update(weekdays=[0, 4], source_text="DEMO: rep explicitly confirms Friday and corrects both messages.")
         alder = self.alder()

@@ -2,7 +2,7 @@ import hashlib
 import json
 import os
 import sqlite3
-from datetime import date, datetime
+from datetime import date
 from pathlib import Path
 
 import streamlit as st
@@ -18,16 +18,16 @@ WEEKDAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", 
 
 def render_report(result, facts, sources, *, ranked=False):
     report = result["report"]
-    st.subheader(report["title"])
+    st.subheader(report["title"].replace("$", r"\$"))
     for index, item in enumerate(report["items"], 1):
         with st.container(border=True):
-            st.markdown(f"**{str(index) + '. ' if ranked else ''}{item['title']}**")
+            st.markdown(f"**{str(index) + '. ' if ranked else ''}{item['title']}**".replace("$", r"\$"))
             for claim in item["evidence"]:
-                st.markdown(claim["text"])
-            st.markdown(f"**Why it matters:** {item['interpretation']}")
-            st.markdown(f"**Next step:** {item['next_step']}")
+                st.markdown(claim["text"].replace("$", r"\$"))
+            st.markdown(f"**Why it matters:** {item['interpretation']}".replace("$", r"\$"))
+            st.markdown(f"**Next step:** {item['next_step']}".replace("$", r"\$"))
             if item["unknowns"]:
-                st.markdown("**Still unknown:** " + " ".join(item["unknowns"]))
+                st.markdown(("**Still unknown:** " + " ".join(item["unknowns"])).replace("$", r"\$"))
             refs = list(dict.fromkeys(
                 ref for claim in item["evidence"]
                 for ref in resolve_sources(claim["sources"], facts, sources)
@@ -91,7 +91,7 @@ with chat_tab:
     st.caption("Custom date ranges and custom sales forecasts are outside this prototype's calculated scope.")
     for index, turn in enumerate(st.session_state.messages):
         with st.chat_message("user"):
-            st.write(turn["question"])
+            st.write(turn["question"].replace("$", r"\$"))
         with st.chat_message("assistant"):
             if turn["revision"] != revision:
                 st.caption("Historical answer — delivery rules have changed since this question.")
@@ -142,10 +142,8 @@ with evidence_tab:
             if vendor["today_is_delivery"]:
                 st.write("Today is a scheduled delivery day; existing orders and arrivals still need confirmation.")
             if vendor["next_delivery"]:
-                delivery_day = date.fromisoformat(vendor["next_delivery"]).strftime("%A, %B %d")
-                deadline = datetime.fromisoformat(vendor["deadline"]).strftime("%A, %B %d at %I:%M %p")
-                st.write(f"Next scheduled delivery you can still order for: {delivery_day}")
-                st.write(f"Order by: {deadline} New York time")
+                st.write(f"Next scheduled delivery you can still order for: {vendor['next_delivery_label']}")
+                st.write(f"Order by: {vendor['deadline_label']}")
             elif not vendor["cutoff_known"]:
                 st.write("The order cutoff is not recorded. Confirm today's arrangements and ordering deadline.")
             else:

@@ -227,9 +227,15 @@ def build_facts(root: Path = Path(__file__).parent) -> tuple[dict, dict]:
             week[key] += value
         sales_rows.append({**row, "day": day, "values": values, "week_id": week["id"]})
     for week in weeks:
-        week["evidence_sets"] = [item["evidence_sets"][0] for item in week["menu"].values()]
+        group = f"sales.{week['id']}"
+        evidence_sets[group] = list(dict.fromkeys(
+            reference for item in week["menu"].values()
+            for reference in evidence_sets[item["evidence_sets"][0]]
+        ))
+        week["evidence_sets"] = [group]
         for item in week["menu"].values():
             item["net_sales_share_percent"] = _percent(item["net_sales"], week["net_sales"])
+            item["evidence_sets"] = [group]
     changes = []
     for previous, current in zip(weeks, weeks[1:]):
         items = {}
@@ -237,16 +243,28 @@ def build_facts(root: Path = Path(__file__).parent) -> tuple[dict, dict]:
             prior, latest = previous["menu"].get(item_id), current["menu"].get(item_id)
             if prior is None and latest is None:
                 continue
+            group = f"sales.change.{previous['id']}.{current['id']}.{item_id}"
+            input_groups = ([f"sales.{previous['id']}.{item_id}"] if prior else []) + (
+                [f"sales.{current['id']}.{item_id}"] if latest else []
+            )
+            evidence_sets[group] = list(dict.fromkeys(
+                reference for input_group in input_groups for reference in evidence_sets[input_group]
+            ))
             items[item_id] = {
                 "name": menu[item_id]["name"],
                 **{key: _change(latest[key] if latest else Decimal(0), prior[key] if prior else Decimal(0))
                    for key in ("net_sales", "quantity_sold")},
-                "evidence_sets": (prior["evidence_sets"] if prior else []) + (latest["evidence_sets"] if latest else []),
+                "evidence_sets": [group],
             }
+        group = f"sales.change.{previous['id']}.{current['id']}"
+        evidence_sets[group] = list(dict.fromkeys(
+            reference for input_group in previous["evidence_sets"] + current["evidence_sets"]
+            for reference in evidence_sets[input_group]
+        ))
         changes.append({
             "from": previous["id"], "to": current["id"],
             **{key: _change(current[key], previous[key]) for key in ("net_sales", "quantity_sold")},
-            "menu": items, "evidence_sets": previous["evidence_sets"] + current["evidence_sets"],
+            "menu": items, "evidence_sets": [group],
         })
 
     headers = {row["invoice_id"]: row for row in tables["invoice_headers"]}
@@ -358,13 +376,25 @@ def build_facts(root: Path = Path(__file__).parent) -> tuple[dict, dict]:
             ingredient_totals[line["ingredient"]].setdefault("quantity", Decimal(0))
             ingredient_totals[line["ingredient"]]["quantity"] += line["quantity"]
             ingredient_totals[line["ingredient"]]["unit"] = line["unit"]
+        for kind, totals in (("ingredient", ingredient_totals), ("vendor", vendor_totals)):
+            for key, total in totals.items():
+                group = f"purchasing.{week['id']}.{kind}.{key}"
+                evidence_sets[group] = list(dict.fromkeys(
+                    reference for input_group in total["evidence_sets"] for reference in evidence_sets[input_group]
+                ))
+                total["evidence_sets"] = [group]
+        group = f"purchasing.{week['id']}"
+        input_groups = [f"invoice.{invoice_id}" for invoice_id in invoice_ids] + week["evidence_sets"]
+        evidence_sets[group] = list(dict.fromkeys(
+            reference for input_group in input_groups for reference in evidence_sets[input_group]
+        ))
         purchase_weeks.append({
             "id": week["id"], "start": week["start"], "end": week["end"],
             "line_purchases": line_total, "header_purchases": header_total,
             "line_purchases_net_sales_percent": _percent(line_total, week["net_sales"]),
             "header_purchases_net_sales_percent": _percent(header_total, week["net_sales"]),
             "ingredients": ingredient_totals, "vendors": vendor_totals,
-            "evidence_sets": [f"invoice.{invoice_id}" for invoice_id in invoice_ids] + week["evidence_sets"],
+            "evidence_sets": [group],
         })
     purchase_changes = []
     for previous, current in zip(purchase_weeks, purchase_weeks[1:]):
@@ -372,18 +402,28 @@ def build_facts(root: Path = Path(__file__).parent) -> tuple[dict, dict]:
         for ingredient in sorted(previous["ingredients"].keys() | current["ingredients"].keys()):
             old = previous["ingredients"].get(ingredient, {"amount": Decimal(0), "quantity": Decimal(0), "evidence_sets": []})
             new = current["ingredients"].get(ingredient, {"amount": Decimal(0), "quantity": Decimal(0), "evidence_sets": []})
+            group = f"purchasing.change.{previous['id']}.{current['id']}.ingredient.{ingredient}"
+            evidence_sets[group] = list(dict.fromkeys(
+                reference for input_group in old["evidence_sets"] + new["evidence_sets"]
+                for reference in evidence_sets[input_group]
+            ))
             ingredient_changes[ingredient] = {
                 "amount": _change(new["amount"], old["amount"]),
                 "quantity": _change(new["quantity"], old["quantity"]),
-                "unit": opening[ingredient]["unit"], "evidence_sets": old["evidence_sets"] + new["evidence_sets"],
+                "unit": opening[ingredient]["unit"], "evidence_sets": [group],
             }
+        group = f"purchasing.change.{previous['id']}.{current['id']}"
+        evidence_sets[group] = list(dict.fromkeys(
+            reference for input_group in previous["evidence_sets"] + current["evidence_sets"]
+            for reference in evidence_sets[input_group]
+        ))
         purchase_changes.append({
             "from": previous["id"], "to": current["id"],
             "line_purchases": _change(current["line_purchases"], previous["line_purchases"]),
             "ratio_change_percentage_points": current["line_purchases_net_sales_percent"] - previous["line_purchases_net_sales_percent"]
             if current["line_purchases_net_sales_percent"] is not None and previous["line_purchases_net_sales_percent"] is not None else None,
             "ingredients": ingredient_changes,
-            "evidence_sets": previous["evidence_sets"] + current["evidence_sets"],
+            "evidence_sets": [group],
         })
     prices = {}
     for ingredient in opening:
@@ -395,9 +435,14 @@ def build_facts(root: Path = Path(__file__).parent) -> tuple[dict, dict]:
                 "normalized_quantity": line["quantity"], "unit_price": line["unit_price"],
                 "sources": line["sources"],
             })
+        group = f"purchasing.prices.{ingredient}"
+        evidence_sets[group] = list(dict.fromkeys(
+            reference for line in selected for reference in line["sources"]
+        ))
         prices[ingredient] = {
             "unit": opening[ingredient]["unit"], "observations": observations,
             "first_to_last_change": _change(selected[-1]["unit_price"], selected[0]["unit_price"]) if selected else None,
+            "evidence_sets": [group],
         }
     by_sku = defaultdict(list)
     for line in included:
@@ -415,6 +460,10 @@ def build_facts(root: Path = Path(__file__).parent) -> tuple[dict, dict]:
                     "interpretation": "A comparison to recorded same-vendor SKU prices; not a confirmed error or refund.",
                     "sources": list(dict.fromkeys(reference for other in selected for reference in other["sources"])),
                 })
+    for anomaly in anomalies:
+        group = f"purchasing.anomaly.{anomaly['kind']}.{anomaly.get('row_id', anomaly['invoice_id'])}"
+        evidence_sets[group] = anomaly["sources"].copy()
+        anomaly["evidence_sets"] = [group]
 
     scopes = {
         "whole_period": sales_rows,
@@ -450,6 +499,10 @@ def build_facts(root: Path = Path(__file__).parent) -> tuple[dict, dict]:
         for ingredient, references in ingredient_refs.items():
             group = f"usage.{scope}.{ingredient}"
             evidence_sets[group] = list(dict.fromkeys(references))
+        for item_id, item in unmodeled.items():
+            group = f"missing_recipes.{scope}.{item_id}"
+            evidence_sets[group] = item["sources"].copy()
+            item["evidence_sets"] = [group]
         usage[scope] = totals
         missing[scope] = unmodeled
 
@@ -461,14 +514,18 @@ def build_facts(root: Path = Path(__file__).parent) -> tuple[dict, dict]:
         inferred = opening[ingredient]["value"] + received - closing[ingredient]["value"]
         count_sources = [refs[("inventory_counts", opening[ingredient]["row_id"])],
                          refs[("inventory_counts", closing[ingredient]["row_id"])]]
+        group = f"consumption.whole_period.{ingredient}"
+        evidence_sets[group] = list(dict.fromkeys(
+            count_sources + [reference for line in selected for reference in line["sources"]] +
+            evidence_sets[f"usage.whole_period.{ingredient}"]
+        ))
         consumption[ingredient] = {
             "unit": opening[ingredient]["unit"], "opening": opening[ingredient]["value"],
             "period_receipts_without_known_dispute": received, "closing": closing[ingredient]["value"],
             "inferred_inventory_outflow": inferred, "known_recipe_usage": usage["whole_period"][ingredient],
             "unexplained_difference": inferred - usage["whole_period"][ingredient],
             "sources": count_sources,
-            "evidence_sets": list(dict.fromkeys(f"invoice.{line['invoice_id']}" for line in selected)) +
-            [f"usage.whole_period.{ingredient}"],
+            "evidence_sets": [group],
         }
     for scope in ("full_week", "weekend"):
         scenario_ingredients = {}
@@ -480,15 +537,23 @@ def build_facts(root: Path = Path(__file__).parent) -> tuple[dict, dict]:
             bought = sorted((line for line in included if line["ingredient"] == ingredient),
                             key=lambda line: (line["day"], line["row_id"]))
             product = catalog[(bought[-1]["vendor_id"], bought[-1]["sku"])] if bought else options[0]
+            stock_and_pack_sources = [
+                refs[("inventory_counts", closing[ingredient]["row_id"])],
+                refs[("vendor_catalog", product["catalog_row_id"])],
+            ]
+            group = f"restocking.{scope}.{ingredient}"
+            evidence_sets[group] = list(dict.fromkeys(
+                stock_and_pack_sources + evidence_sets[f"usage.{scope}.{ingredient}"] +
+                (bought[-1]["sources"] if bought else []) + ["SITE_PROFILE.md#time-context"]
+            ))
             scenario_ingredients[ingredient] = {
                 "unit": opening[ingredient]["unit"], "known_recipe_demand": demand,
                 "closing_count_quantity": stock, "shortfall_against_closing_count": gap,
                 "vendor_id": product["vendor_id"], "sku": product["sku"],
                 "pack_quantity": product["pack_value"], "order_unit": product["order_unit"],
                 "minimum_whole_packs_for_known_gap": (gap / product["pack_value"]).to_integral_value(rounding=ROUND_CEILING),
-                "sources": [refs[("inventory_counts", closing[ingredient]["row_id"])],
-                            refs[("vendor_catalog", product["catalog_row_id"])]],
-                "evidence_sets": [f"usage.{scope}.{ingredient}"],
+                "sources": stock_and_pack_sources,
+                "evidence_sets": [group],
             }
         scenarios.append({
             "id": scope,
@@ -567,6 +632,7 @@ def build_facts(root: Path = Path(__file__).parent) -> tuple[dict, dict]:
         for reference in references:
             if reference not in sources:
                 raise ValueError(f"Unknown evidence reference: {reference}")
+    referenced_groups = set()
     pending = [facts]
     while pending:
         value = pending.pop()
@@ -576,12 +642,17 @@ def build_facts(root: Path = Path(__file__).parent) -> tuple[dict, dict]:
                     for reference in item:
                         if reference not in sources:
                             raise ValueError(f"Unknown evidence reference: {reference}")
-                elif key == "evidence_sets" and isinstance(item, list):
-                    for group in item:
-                        if group not in evidence_sets:
-                            raise ValueError(f"Unknown evidence set: {group}")
+                elif key == "evidence_sets":
+                    if isinstance(item, list):
+                        for group in item:
+                            if group not in evidence_sets:
+                                raise ValueError(f"Unknown evidence set: {group}")
+                        referenced_groups.update(item)
                 else:
                     pending.append(item)
         elif isinstance(value, list):
             pending.extend(value)
+    facts["evidence_sets"] = {
+        group: references for group, references in evidence_sets.items() if group in referenced_groups
+    }
     return _json_values(facts), sources

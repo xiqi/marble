@@ -57,6 +57,10 @@ class AppTests(unittest.TestCase):
         self.assertEqual(len(self.app.exception), 0)
         self.generate.assert_called_once()
         self.assertEqual(len(self.app.session_state["brief"]["report"]["items"]), 3)
+        self.assertTrue(any(
+            "Order by: Tuesday, October 06, 2026 at 12:00 PM EDT" in element.value
+            for element in self.app.markdown
+        ))
         self.app.run()
         next(widget for widget in self.app.selectbox if widget.label == "Analysis").set_value("restocking").run()
         self.assertEqual(len(self.app.exception), 0)
@@ -135,6 +139,10 @@ class AppTests(unittest.TestCase):
         )
         self.assertEqual(alder["next_delivery"], "2026-10-08")
         self.assertEqual(alder["deadline"], "2026-10-07T12:00:00-04:00")
+        self.assertTrue(any(
+            "Order by: Wednesday, October 07, 2026 at 12:00 PM EDT" in element.value
+            for element in self.app.markdown
+        ))
         self.assertIn("source_updates#UPD-001", self.generate.call_args.args[1])
         self.assertNotEqual(self.app.session_state["brief_revision"], old_revision)
         self.assertTrue(any(

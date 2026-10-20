@@ -2,12 +2,13 @@ import json
 import os
 import tomllib
 from pathlib import Path
+from typing import Literal
 
 from openai import OpenAI
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, create_model
 
 ROOT = Path(__file__).resolve().parent
-MODEL = "gpt-5.4-mini-2026-03-17"
+MODEL = "gpt-5.4-2026-03-05"
 
 
 class Claim(BaseModel):
@@ -41,23 +42,38 @@ Supported calculations: three complete weeks and adjacent comparisons; the compl
 opening-to-closing count interval; next full week/weekend repeating last week's demand.
 For a number outside that scope, explain that this version has not computed it.
 Distinguish that limitation from genuinely missing source evidence.
+The supplied daily POS rows already exist: an unsupported date-range calculation
+does not require a new export. Ask for additional data only when it is truly absent.
 
 Correct false premises. Purchases/net sales is NOT actual COGS or gross margin.
 Invoice headers and lines can disagree. Do not repair source prices. Case prices
 must be interpreted with their SKU-specific size. Missing special recipes and
 unweighed waste prevent attribution of unexplained usage; do not blame an employee.
 Opening/closing counts are snapshots, not live inventory. Do not add old purchases
-again to closing stock. Future/unconfirmed deliveries are not on-hand stock.
+again to closing stock. Do not count future/unconfirmed deliveries as confirmed
+on-hand stock; an unconfirmed receipt is not proof that the stock is absent.
 Restocking gaps are conditional baseline scenarios, not forecasts or confirmed orders.
 Do not assume future market attendance, extra demand, vendor capacity, or unknown cutoffs.
+Never claim a future delivery covers consumption before it arrives; a delivery
+schedule alone does not establish that enough stock has been ordered.
 Use CURRENT_FACTS.delivery to decide whether today is a scheduled delivery day and
-whether a cutoff has passed. A passed cutoff does NOT prove no existing order or
+whether a cutoff has passed. Copy next_delivery_label and deadline_label exactly
+when stating dates and weekdays; never derive a weekday from an ISO date yourself.
+A passed cutoff does NOT prove no existing order or
 delivery exists today. Distinguish today's arrangements from the next scheduled
 delivery whose cutoff has not passed. Current or upcoming conflicting rules must
 remain unresolved; use their individual dates only as conditional possibilities.
+An unresolved conflict means NONE of its alternatives is confirmed for planning,
+including a previously confirmed correction. Do not recommend using one rule
+while awaiting confirmation; ask the operator to confirm with the supplier first,
+then save that confirmed message as a correction.
 Menu cancellation and correction N13/N14 concern October 3 only. N07 is a repair
 and one normal reading, not evidence the earlier cooler incident continues today.
+Distinguish a note's recorded date from the service date it describes.
 Do not resurrect old delivery rules when current memory reports an unresolved conflict.
+The delivery-rule form changes schedules and cutoffs only. It cannot confirm
+receipts, edit inventory counts, or save recipes or waste records. Recommend those
+checks in the operator's actual records without claiming this app can save them.
 
 Write concise English. Put sourced facts in evidence; interpretation is explicitly
 a judgment, not another uncited factual claim. next_step must be actionable, or
@@ -67,12 +83,27 @@ Every evidence claim must cite real original source IDs, using file#ID, or
 set:NAME for an evidence_sets group. The UI resolves groups to original file/row IDs;
 never cite an internal metric name as if it were a source. Cite all inputs needed
 for a calculation, and the record proving a correction, not just the obsolete record.
+Application capabilities and calculation methods are not statements in the source
+records. Explain those boundaries in interpretation or next_step, without claiming
+the original notes say them. Evidence contains source observations or computed
+results supported by their inputs. Always include the unit for a unit price.
+For a computed value, cite the complete evidence_sets group provided on that
+result. A usage-only group cannot support a count difference or restocking gap;
+an invoice group cannot establish a changed delivery schedule. Delivery claims
+must cite the applicable rule's source_ref and SITE_PROFILE.md#time-context.
 For an entirely unsupported question, evidence may be empty; explain the boundary.
 
 For a morning brief, return 3-5 distinct items, in priority order. Explain why they
 matter before ordering. Consider today's pantry delivery, unconfirmed chicken,
 the next order window and weekend prep, invoice exceptions, and missing usage records.
 Choose from CURRENT_FACTS; do not blindly repeat this list after a rule change.
+Prioritize today's ordering opportunities and computed stock gaps, then invoice
+exceptions and missing usage records. Use the relevant computed demand and gap
+when explaining a stock concern, rather than just repeating a closing count.
+A resolved historical cancellation should not take a standalone priority slot;
+mention it only when it supports a current preparation decision.
+Do not number item titles; the UI does that. Keep each interpretation and next
+step to one concise sentence, and include only meaningful unknowns.
 For a question, return only the relevant 1-5 items and respond to the actual follow-up.
 """
 
@@ -126,18 +157,31 @@ def generate(facts: dict, sources: dict, question: str | None = None,
     messages = [
         {"role": "system", "content": INSTRUCTIONS},
         {"role": "user", "content": json.dumps(
-            {"CURRENT_FACTS": facts, "SOURCE_RECORDS": source_context},
+            {"CURRENT_FACTS": {key: value for key, value in facts.items() if key != "evidence_sets"},
+             "SOURCE_RECORDS": source_context},
             ensure_ascii=False, separators=(",", ":"),
         )},
         *(history or []),
         {"role": "user", "content": request},
     ]
+    source_ids = [*sources, *(f"set:{name}" for name in facts["evidence_sets"])]
+    sourced_claim = create_model(
+        "SourcedClaim", __base__=Claim,
+        sources=(list[Literal[tuple(source_ids)]], Field(min_length=1)),
+    )
+    sourced_finding = create_model(
+        "SourcedFinding", __base__=Finding, evidence=(list[sourced_claim], ...),
+    )
+    sourced_report = create_model(
+        "SourcedReport", __base__=Report,
+        items=(list[sourced_finding], Field(min_length=1, max_length=5)),
+    )
     with OpenAI(api_key=api_key(), max_retries=0) as client:
         response = client.responses.parse(
             model=MODEL,
             input=messages,
-            text_format=Report,
-            reasoning={"effort": "low"},
+            text_format=sourced_report,
+            reasoning={"effort": "high"},
             store=False,
         )
     if response.status != "completed" or response.output_parsed is None:
@@ -153,8 +197,8 @@ def generate(facts: dict, sources: dict, question: str | None = None,
     usage = response.usage
     cached = usage.input_tokens_details.cached_tokens
     estimated_cost = (
-        (usage.input_tokens - cached) * 0.75
-        + cached * 0.075 + usage.output_tokens * 4.50
+        (usage.input_tokens - cached) * 2.50
+        + cached * 0.25 + usage.output_tokens * 15.00
     ) / 1_000_000
     return {
         "report": report.model_dump(),

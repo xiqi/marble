@@ -200,6 +200,8 @@ def delivery_context(db_path: Path, now: datetime = BUSINESS_NOW) -> dict:
             rule["active"] = rule["id"] in current_ids
             rule["next_delivery"] = None
             rule["deadline"] = None
+            rule["next_delivery_label"] = None
+            rule["deadline_label"] = None
 
         # Rules are constant between their effective-date boundaries.
         boundaries = {today}
@@ -235,6 +237,8 @@ def delivery_context(db_path: Path, now: datetime = BUSINESS_NOW) -> dict:
                     if rule["next_delivery"] is None or delivery.isoformat() < rule["next_delivery"]:
                         rule["next_delivery"] = delivery.isoformat()
                         rule["deadline"] = deadline.isoformat()
+                        rule["next_delivery_label"] = delivery.strftime("%A, %B %d, %Y")
+                        rule["deadline_label"] = deadline.strftime("%A, %B %d, %Y at %I:%M %p %Z")
 
         signatures = {
             (tuple(rule["weekdays"]), rule["lead_days"], rule["cutoff_time"])
@@ -276,6 +280,8 @@ def delivery_context(db_path: Path, now: datetime = BUSINESS_NOW) -> dict:
             ),
             "next_delivery": safe_next["next_delivery"] if safe_next is not None else None,
             "deadline": safe_next["deadline"] if safe_next is not None else None,
+            "next_delivery_label": safe_next["next_delivery_label"] if safe_next is not None else None,
+            "deadline_label": safe_next["deadline_label"] if safe_next is not None else None,
             "next_source_ref": safe_next["source_ref"] if safe_next is not None else None,
         })
     return {"vendors": vendors, "history": rules, "sources": sources}

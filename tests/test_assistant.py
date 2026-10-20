@@ -45,9 +45,14 @@ class AssistantTests(unittest.TestCase):
         self.assertEqual(sdk.call_args.kwargs["max_retries"], 0)
         self.assertFalse(parse.call_args.kwargs["store"])
         self.assertNotIn("tools", parse.call_args.kwargs)
+        report_schema = parse.call_args.kwargs["text_format"].model_json_schema()
+        self.assertEqual(
+            set(report_schema["$defs"]["SourcedClaim"]["properties"]["sources"]["items"]["enum"]),
+            {"data/pos_daily.csv#P1", "set:week"},
+        )
         self.assertIn("CURRENT_FACTS", result["request"][1]["content"])
         self.assertEqual(result["request"][-1]["content"], "What changed?")
-        self.assertEqual(result["estimated_cost_usd"], 0.001133)
+        self.assertEqual(result["estimated_cost_usd"], 0.003775)
 
     @patch.dict(os.environ, {"OPENAI_API_KEY": "test-not-a-real-key"})
     @patch("assistant.OpenAI")

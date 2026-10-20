@@ -98,6 +98,8 @@ class AnalysisTests(unittest.TestCase):
             count = sum(source["file"] == f"data/{filename.name}" for source in self.sources.values())
             self.assertEqual(count, len(rows), filename.name)
 
+        used_groups = set()
+
         def check(value):
             if isinstance(value, dict):
                 for key, item in value.items():
@@ -105,6 +107,7 @@ class AnalysisTests(unittest.TestCase):
                         for reference in item:
                             self.assertIn(reference, self.sources)
                     elif key == "evidence_sets" and isinstance(item, list):
+                        used_groups.update(item)
                         for group in item:
                             self.assertIn(group, self.facts["evidence_sets"])
                     else:
@@ -114,6 +117,8 @@ class AnalysisTests(unittest.TestCase):
                     check(item)
 
         check(self.facts)
+        self.assertEqual(used_groups, self.facts["evidence_sets"].keys())
+        self.assertFalse(any(group.startswith("usage.") for group in used_groups))
         for references in self.facts["evidence_sets"].values():
             for reference in references:
                 self.assertIn(reference, self.sources)
@@ -121,6 +126,88 @@ class AnalysisTests(unittest.TestCase):
         self.assertEqual(correction["applies_on"], "2026-10-03")
         self.assertIn("GM_OPS_LOG.md#N14", correction["sources"])
         self.assertIn("data/pos_daily.csv#POS-20-M05", correction["sources"])
+
+    def test_complete_calculation_groups_include_all_inputs(self):
+        groups = self.facts["evidence_sets"]
+        sales_week = self.facts["sales"]["weeks"][2]
+        self.assertEqual(sales_week["evidence_sets"], ["sales.week_3"])
+        for item_id, item in sales_week["menu"].items():
+            self.assertEqual(item["evidence_sets"], ["sales.week_3"])
+            expected = {
+                reference for reference, source in self.sources.items()
+                if source["file"] == "data/pos_daily.csv"
+                and source["content"]["pos_item_id"] == item_id
+                and "2026-09-28" <= source["content"]["business_date"] <= "2026-10-04"
+            }
+            self.assertTrue(expected.issubset(groups["sales.week_3"]))
+        sales_change = self.facts["sales"]["changes"][1]
+        self.assertEqual(len(sales_change["evidence_sets"]), 1)
+        sales_inputs = groups[sales_change["evidence_sets"][0]]
+        self.assertTrue(set(groups["sales.week_2"] + groups["sales.week_3"]).issubset(sales_inputs))
+        breakfast_change = sales_change["menu"]["M05"]
+        self.assertEqual(len(breakfast_change["evidence_sets"]), 1)
+        self.assertTrue({
+            "data/pos_daily.csv#POS-13-M05", "data/pos_daily.csv#POS-14-M05",
+            "data/pos_daily.csv#POS-20-M05", "data/pos_daily.csv#POS-21-M05",
+        }.issubset(
+            groups[breakfast_change["evidence_sets"][0]]
+        ))
+
+        purchase_change = self.facts["purchasing"]["changes"][1]
+        self.assertEqual(len(purchase_change["evidence_sets"]), 1)
+        purchase_inputs = groups[purchase_change["evidence_sets"][0]]
+        for invoice_number in range(7, 19):
+            invoice_id = f"INV-{invoice_number:03d}"
+            self.assertIn(f"data/invoice_headers.csv#{invoice_id}", purchase_inputs)
+            expected = {
+                reference for reference, source in self.sources.items()
+                if source["file"] == "data/invoice_lines.csv"
+                and source["content"]["invoice_id"] == invoice_id
+            }
+            self.assertTrue(expected.issubset(purchase_inputs))
+        self.assertTrue(set(groups["sales.week_2"] + groups["sales.week_3"]).issubset(purchase_inputs))
+        for week in self.facts["purchasing"]["weeks"]:
+            self.assertEqual(len(week["evidence_sets"]), 1)
+            for total in list(week["ingredients"].values()) + list(week["vendors"].values()):
+                self.assertEqual(len(total["evidence_sets"]), 1)
+
+        chicken = "Chicken thigh boneless skinless"
+        variance = self.facts["consumption"]["ingredients"][chicken]
+        self.assertEqual(len(variance["evidence_sets"]), 1)
+        variance_inputs = groups[variance["evidence_sets"][0]]
+        chicken_sales = {
+            reference for reference, source in self.sources.items()
+            if source["file"] == "data/pos_daily.csv" and source["content"]["pos_item_id"] in ("M01", "M03")
+        }
+        chicken_recipes = {"data/recipes.csv#REC-M01-CHICKEN", "data/recipes.csv#REC-M03-CHICKEN"}
+        self.assertTrue((set(variance["sources"]) | chicken_sales | chicken_recipes).issubset(variance_inputs))
+        for invoice_number in (1, 5, 7, 11, 13, 16):
+            self.assertIn(f"data/invoice_lines.csv#INV-{invoice_number:03d}-L01", variance_inputs)
+            self.assertIn(f"data/invoice_headers.csv#INV-{invoice_number:03d}", variance_inputs)
+        self.assertIn("data/vendor_catalog.csv#CAT-CHICKEN20", variance_inputs)
+        self.assertNotIn("data/invoice_lines.csv#INV-099-L01", variance_inputs)
+
+        for scenario in self.facts["restocking"]["scenarios"]:
+            stock = scenario["ingredients"][chicken]
+            self.assertEqual(len(stock["evidence_sets"]), 1)
+            stock_inputs = groups[stock["evidence_sets"][0]]
+            expected_sales = {
+                reference for reference in chicken_sales
+                if scenario["baseline_start"] <= self.sources[reference]["content"]["business_date"] <= scenario["baseline_end"]
+            }
+            self.assertTrue((set(stock["sources"]) | expected_sales | chicken_recipes).issubset(stock_inputs))
+            self.assertIn("data/invoice_lines.csv#INV-016-L01", stock_inputs)
+            self.assertIn("data/invoice_headers.csv#INV-016", stock_inputs)
+        price = self.facts["purchasing"]["price_history"][chicken]
+        self.assertEqual(len(price["evidence_sets"]), 1)
+        for observation in price["observations"]:
+            self.assertTrue(set(observation["sources"]).issubset(groups[price["evidence_sets"][0]]))
+        for anomaly in self.facts["purchasing"]["anomalies"]:
+            self.assertEqual(len(anomaly["evidence_sets"]), 1)
+            self.assertEqual(groups[anomaly["evidence_sets"][0]], anomaly["sources"])
+        special = self.facts["consumption"]["missing_recipes"]["M99"]
+        self.assertEqual(len(special["evidence_sets"]), 1)
+        self.assertEqual(groups[special["evidence_sets"][0]], special["sources"])
 
     def mutated_facts(self, table, mutate):
         with tempfile.TemporaryDirectory() as directory:
