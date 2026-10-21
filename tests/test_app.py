@@ -55,11 +55,11 @@ class AppTests(unittest.TestCase):
             "estimated_cost_usd": 0.0003,
         }
 
-    def test_first_brief_is_generated_once_and_widget_reruns_do_not_repeat_it(self):
+    def test_first_load_and_record_navigation_do_not_generate_until_requested(self):
         self.app.run()
         self.assertEqual(len(self.app.exception), 0)
-        self.generate.assert_called_once()
-        self.assertEqual(len(self.app.session_state["brief"]["report"]["items"]), 3)
+        self.generate.assert_not_called()
+        self.assertIsNone(self.app.session_state["brief"])
         self.assertEqual(
             [tab.label for tab in self.app.tabs],
             ["Morning brief", "Questions", "Delivery", "Records"],
@@ -72,17 +72,22 @@ class AppTests(unittest.TestCase):
         self.app.selectbox(key="analysis_section").set_value("Restocking").run()
         self.app.selectbox(key="analysis_section").set_value("Stock reconciliation").run()
         self.assertEqual(len(self.app.exception), 0)
+        self.generate.assert_not_called()
+        self.app.button(key="prepare_brief").click().run()
+        self.generate.assert_called_once()
+        self.assertEqual(len(self.app.session_state["brief"]["report"]["items"]), 3)
+        self.app.run()
         self.generate.assert_called_once()
 
     def test_followup_receives_the_question_and_previous_answer(self):
         self.app.run()
         self.app.chat_input[0].set_value("What should I check before ordering?").run()
-        self.assertEqual(self.generate.call_count, 2)
+        self.assertEqual(self.generate.call_count, 1)
         self.assertEqual(self.generate.call_args.args[2], "What should I check before ordering?")
         self.assertEqual(self.generate.call_args.args[3], [])
         self.app.chat_input[0].set_value("And when is the cutoff?").run()
         self.assertEqual(len(self.app.exception), 0)
-        self.assertEqual(self.generate.call_count, 3)
+        self.assertEqual(self.generate.call_count, 2)
         question, history = self.generate.call_args.args[2:]
         self.assertEqual(question, "And when is the cutoff?")
         self.assertEqual(history[0], {
@@ -92,7 +97,7 @@ class AppTests(unittest.TestCase):
         self.assertEqual(json.loads(history[1]["content"])["title"], "Answer")
         self.assertEqual(len(self.app.session_state["messages"]), 2)
         self.app.run()
-        self.assertEqual(self.generate.call_count, 3)
+        self.assertEqual(self.generate.call_count, 2)
 
     def test_records_and_evidence_exclude_assignment_material_and_generation_details(self):
         def report_with_internal_context(*args):
@@ -104,10 +109,11 @@ class AppTests(unittest.TestCase):
 
         self.generate.side_effect = report_with_internal_context
         self.app.run()
+        self.app.button(key="prepare_brief").click().run()
         self.assertEqual(len(self.app.exception), 0)
         collection = next(widget for widget in self.app.selectbox if widget.label == "Record collection")
         self.assertCountEqual(collection.options, [
-            "Sales transactions", "Invoice headers", "Invoice lines", "Inventory counts",
+            "Sales transactions", "Invoices", "Invoice lines", "Inventory counts",
             "Menu", "Recipe cards", "Supplier packs and units", "Supplier order sheet", "Manager notebook",
         ])
         sources = self.generate.call_args.args[1]
@@ -139,6 +145,7 @@ class AppTests(unittest.TestCase):
 
     def test_calculation_choices_follow_the_analysis_and_keep_all_groups_accessible(self):
         self.app.run()
+        self.app.button(key="prepare_brief").click().run()
         groups = self.generate.call_args.args[0]["evidence_sets"]
         visited = set()
         categories = [
@@ -175,7 +182,7 @@ class AppTests(unittest.TestCase):
         self.generate.side_effect = OpenAIError("Simulated API failure")
         self.app.chat_input[0].set_value("Why did purchases change?").run()
         self.assertEqual(len(self.app.exception), 0)
-        self.assertEqual(self.generate.call_count, 2)
+        self.assertEqual(self.generate.call_count, 1)
         turn = self.app.session_state["messages"][0]
         self.assertEqual(turn["question"], "Why did purchases change?")
         self.assertIsNone(turn["result"])
@@ -183,11 +190,11 @@ class AppTests(unittest.TestCase):
         self.assertIn("Your question could not be answered. Please try again.", [item.value for item in self.app.error])
         self.assertNotIn("Simulated API failure", [item.value for item in self.app.error])
         self.app.run()
-        self.assertEqual(self.generate.call_count, 2)
+        self.assertEqual(self.generate.call_count, 1)
         self.generate.side_effect = self.report
         next(button for button in self.app.button if button.label == "Retry this answer").click().run()
         self.assertEqual(len(self.app.exception), 0)
-        self.assertEqual(self.generate.call_count, 3)
+        self.assertEqual(self.generate.call_count, 2)
         self.assertEqual(len(self.app.session_state["messages"]), 1)
         self.assertIsNotNone(self.app.session_state["messages"][0]["result"])
         self.assertIsNone(self.app.session_state["messages"][0]["error"])
@@ -196,11 +203,12 @@ class AppTests(unittest.TestCase):
     def test_failed_brief_retries_only_after_the_retry_button(self):
         self.generate.side_effect = OpenAIError("Simulated morning API failure")
         self.app.run()
+        self.app.button(key="prepare_brief").click().run()
         self.assertEqual(len(self.app.exception), 0)
         self.assertIsNone(self.app.session_state["brief"])
         self.assertEqual(self.generate.call_count, 1)
         self.assertTrue(any(
-            "Your records and delivery rules are still available" in item.value
+            "Your records and delivery schedules are still available" in item.value
             for item in self.app.error
         ))
         self.assertEqual(self.app.session_state["brief_error"], "Simulated morning API failure")
@@ -213,6 +221,28 @@ class AppTests(unittest.TestCase):
         self.assertEqual(self.generate.call_count, 2)
         self.assertIsNotNone(self.app.session_state["brief"])
 
+    def test_failed_refresh_keeps_previous_brief_and_revision(self):
+        self.app.run()
+        self.app.button(key="prepare_brief").click().run()
+        previous_brief = self.app.session_state["brief"]
+        previous_revision = self.app.session_state["brief_revision"]
+        self.generate.side_effect = OpenAIError("Simulated refresh failure")
+        self.app.button(key="prepare_brief").click().run()
+
+        self.assertEqual(len(self.app.exception), 0)
+        self.assertEqual(self.generate.call_count, 2)
+        self.assertEqual(self.app.session_state["brief"], previous_brief)
+        self.assertEqual(self.app.session_state["brief_revision"], previous_revision)
+        self.assertEqual(self.app.session_state["brief_error"], "Simulated refresh failure")
+        self.assertTrue(self.app.error)
+        self.assertNotIn("Simulated refresh failure", [item.value for item in self.app.error])
+        self.app.run()
+        self.assertEqual(self.generate.call_count, 2)
+        self.generate.side_effect = self.report
+        self.app.button(key="prepare_brief").click().run()
+        self.assertEqual(self.generate.call_count, 3)
+        self.assertIsNone(self.app.session_state["brief_error"])
+
     def test_retry_after_a_later_answer_preserves_history_and_appends_the_answer(self):
         self.app.run()
         self.generate.side_effect = OpenAIError("Simulated API failure")
@@ -223,7 +253,7 @@ class AppTests(unittest.TestCase):
         next(button for button in self.app.button if button.label == "Retry this answer").click().run()
 
         self.assertEqual(len(self.app.exception), 0)
-        self.assertEqual(self.generate.call_count, 4)
+        self.assertEqual(self.generate.call_count, 3)
         messages = self.app.session_state["messages"]
         self.assertEqual(len(messages), 3)
         self.assertIsNone(messages[0]["result"])
@@ -234,11 +264,12 @@ class AppTests(unittest.TestCase):
         self.assertEqual(history[1], {"role": "user", "content": "What is the next delivery?"})
         self.assertEqual(json.loads(history[2]["content"]), later_answer["report"])
 
-    def test_correction_rebuilds_brief_and_marks_old_chat_as_historical(self):
+    def test_correction_marks_brief_stale_until_refresh_and_keeps_chat_historical(self):
         self.app.run()
+        self.app.button(key="prepare_brief").click().run()
         self.app.chat_input[0].set_value("When should I order from Alder?").run()
         old_revision = self.app.session_state["messages"][0]["revision"]
-        self.app.radio(key="update_kind").set_value("Confirmed correction")
+        self.app.radio(key="update_kind").set_value("Confirmed schedule change")
         self.app.text_area(key="update_message").set_value("SIMULATED: Alder confirms Monday/Thursday, noon the day before.")
         self.app.multiselect(key="update_weekdays").set_value(["Monday", "Thursday"])
         self.app.checkbox(key="update_cutoff_known").check().run()
@@ -246,6 +277,17 @@ class AppTests(unittest.TestCase):
         self.app.time_input(key="update_cutoff_time").set_value(time(12))
         next(button for button in self.app.button if button.label == "Save delivery update").click().run()
         self.assertEqual(len(self.app.exception), 0)
+        self.assertEqual(self.generate.call_count, 2)
+        self.assertEqual(self.app.session_state["brief_revision"], old_revision)
+        self.assertIn(
+            "Delivery schedules have changed. Refresh the morning brief before using its ordering advice.",
+            [item.value for item in self.app.warning],
+        )
+        self.assertIn(
+            "Delivery schedule saved. Refresh the morning brief to include this change.",
+            [item.value for item in self.app.success],
+        )
+        self.app.button(key="prepare_brief").click().run()
         self.assertEqual(self.generate.call_count, 3)
         self.assertEqual(len(self.generate.call_args.args), 2)
         alder = next(
@@ -259,10 +301,9 @@ class AppTests(unittest.TestCase):
             for element in self.app.markdown
         ))
         self.assertIn("source_updates#UPD-001", self.generate.call_args.args[1])
-        self.assertIn("Delivery update saved. Your morning brief has been updated.", [item.value for item in self.app.success])
         self.assertNotEqual(self.app.session_state["brief_revision"], old_revision)
         self.assertTrue(any(
-            "Historical answer — delivery rules have changed" in caption.value
+            "Historical answer — delivery schedules have changed" in caption.value
             for caption in self.app.caption
         ))
         self.app.chat_input[0].set_value("Does the earlier cutoff still apply?").run()
@@ -282,7 +323,7 @@ class AppTests(unittest.TestCase):
 
     def test_future_conflict_warns_and_shows_both_upcoming_rule_sources(self):
         self.app.run()
-        self.app.radio(key="update_kind").set_value("Unresolved conflicting message")
+        self.app.radio(key="update_kind").set_value("Conflicting supplier message")
         message = "SIMULATED: an unconfirmed message says Thursday from October 6."
         self.app.text_area(key="update_message").set_value(message)
         self.app.multiselect(key="update_weekdays").set_value(["Monday", "Thursday"])
@@ -292,10 +333,11 @@ class AppTests(unittest.TestCase):
         self.app.date_input(key="update_start").set_value(date(2026, 10, 6))
         next(button for button in self.app.button if button.label == "Save delivery update").click().run()
         self.assertEqual(len(self.app.exception), 0)
-        self.assertEqual(self.generate.call_count, 2)
+        self.generate.assert_not_called()
         self.assertTrue(any(
             "Conflicting delivery information" in warning.value for warning in self.app.warning
         ))
+        self.app.button(key="prepare_brief").click().run()
         alder = next(
             vendor for vendor in self.generate.call_args.args[0]["delivery"]
             if vendor["vendor_id"] == "V1"
@@ -305,28 +347,67 @@ class AppTests(unittest.TestCase):
         self.assertIsNone(alder["next_delivery"])
         details = next(
             expander for expander in self.app.expander
-            if expander.label.startswith("Schedule details & sources")
+            if expander.label == "Schedule details and messages"
             and any("Alder rep confirmed the route changes" in item.value for item in expander.markdown)
         )
         self.assertIn(message, [item.value for item in details.markdown])
-        self.assertTrue(any("**Monday, Wednesday**" in item.value for item in details.markdown))
-        self.assertTrue(any("**Monday, Thursday**" in item.value for item in details.markdown))
-        self.assertTrue(any("Effective 2026-10-06" in item.value for item in details.caption))
+        self.assertIn(
+            "**Current schedule · Monday, Wednesday** · Order by 12:00 the day before",
+            [item.value for item in details.markdown],
+        )
+        self.assertIn(
+            "**unconfirmed · starts oct 06, 2026 · monday, thursday** · order by 12:00 the day before",
+            [item.value.lower() for item in details.markdown],
+        )
+        self.assertTrue(any(item.value.startswith("If confirmed:") for item in details.markdown))
+        self.assertFalse(any(item.value.startswith("Next available delivery:") for item in details.markdown))
+        self.assertTrue(any("Effective Oct 06, 2026" in item.value for item in details.caption))
+
+    def test_temporary_schedule_labels_resuming_previous_schedule_as_upcoming(self):
+        self.app.run()
+        self.app.radio(key="update_kind").set_value("Confirmed schedule change")
+        message = "Alder confirms Monday only through October 6, then the Monday/Wednesday schedule resumes."
+        self.app.text_area(key="update_message").set_value(message)
+        self.app.multiselect(key="update_weekdays").set_value(["Monday"])
+        self.app.checkbox(key="update_cutoff_known").check().run()
+        self.app.number_input(key="update_lead_days").set_value(1)
+        self.app.time_input(key="update_cutoff_time").set_value(time(12))
+        self.app.checkbox(key="update_expires").check().run()
+        self.app.date_input(key="update_end").set_value(date(2026, 10, 6))
+        next(button for button in self.app.button if button.label == "Save delivery update").click().run()
+
+        self.assertEqual(len(self.app.exception), 0)
+        self.generate.assert_not_called()
+        details = next(
+            expander for expander in self.app.expander
+            if expander.label == "Schedule details and messages"
+            and message in [item.value for item in expander.markdown]
+        )
+        displayed = [item.value for item in details.markdown]
+        self.assertIn("**Current schedule · Monday** · Order by 12:00 the day before", displayed)
+        self.assertIn("**Upcoming schedule · Monday, Wednesday** · Order by 12:00 the day before", displayed)
+        self.assertNotIn("**Current schedule · Monday, Wednesday** · Order by 12:00 the day before", displayed)
+        self.assertFalse(any("Unconfirmed" in item for item in displayed))
+        self.assertIn(
+            "Next available delivery: Wednesday, October 07, 2026 · order by Tuesday, October 06, 2026 at 12:00 PM EDT",
+            displayed,
+        )
 
     def test_future_conflict_with_unknown_cutoff_still_warns_and_reaches_the_model(self):
         self.app.run()
         self.app.selectbox(key="update_supplier").set_value("V2").run()
-        self.app.radio(key="update_kind").set_value("Unresolved conflicting message")
+        self.app.radio(key="update_kind").set_value("Conflicting supplier message")
         message = "SIMULATED: Juniper says Tuesday from October 6; cutoff unknown."
         self.app.text_area(key="update_message").set_value(message)
         self.app.multiselect(key="update_weekdays").set_value(["Tuesday"])
         self.app.date_input(key="update_start").set_value(date(2026, 10, 6))
         next(button for button in self.app.button if button.label == "Save delivery update").click().run()
         self.assertEqual(len(self.app.exception), 0)
-        self.assertEqual(self.generate.call_count, 2)
+        self.generate.assert_not_called()
         self.assertTrue(any(
             "Conflicting delivery information" in warning.value for warning in self.app.warning
         ))
+        self.app.button(key="prepare_brief").click().run()
         juniper = next(
             vendor for vendor in self.generate.call_args.args[0]["delivery"]
             if vendor["vendor_id"] == "V2"
@@ -342,21 +423,21 @@ class AppTests(unittest.TestCase):
         )
         details = next(
             expander for expander in self.app.expander
-            if expander.label.startswith("Schedule details & sources")
+            if expander.label == "Schedule details and messages"
             and any(
                 "vendor_id" in table.value.columns and "V2" in set(table.value["vendor_id"])
                 for table in expander.dataframe
             )
         )
         self.assertIn(message, [item.value for item in details.markdown])
-        self.assertTrue(any("**Monday, Wednesday, Friday**" in item.value for item in details.markdown))
-        self.assertTrue(any("**Tuesday**" in item.value for item in details.markdown))
-        self.assertTrue(any("Effective 2026-10-06" in item.value for item in details.caption))
+        self.assertTrue(any("· Monday, Wednesday, Friday**" in item.value for item in details.markdown))
+        self.assertTrue(any("· Tuesday**" in item.value for item in details.markdown))
+        self.assertTrue(any("Effective Oct 06, 2026" in item.value for item in details.caption))
 
     def test_future_confirmed_window_is_visible_when_the_current_cutoff_is_unknown(self):
         self.app.run()
         self.app.selectbox(key="update_supplier").set_value("V2").run()
-        self.app.radio(key="update_kind").set_value("Confirmed correction")
+        self.app.radio(key="update_kind").set_value("Confirmed schedule change")
         self.app.text_area(key="update_message").set_value("SIMULATED: Juniper confirms Monday, noon the day before, starting October 12.")
         self.app.multiselect(key="update_weekdays").set_value(["Monday"])
         self.app.checkbox(key="update_cutoff_known").check().run()
@@ -366,6 +447,8 @@ class AppTests(unittest.TestCase):
         next(button for button in self.app.button if button.label == "Save delivery update").click().run()
 
         self.assertEqual(len(self.app.exception), 0)
+        self.generate.assert_not_called()
+        self.app.button(key="prepare_brief").click().run()
         juniper = next(
             vendor for vendor in self.generate.call_args.args[0]["delivery"]
             if vendor["vendor_id"] == "V2"
@@ -375,18 +458,18 @@ class AppTests(unittest.TestCase):
         self.assertFalse(juniper["cutoff_known"])
         self.assertFalse(juniper["next_conflicted"])
         self.assertTrue(any(
-            "Window under this rule: Monday, October 12, 2026 · order by Sunday, October 11, 2026 at 12:00 PM EDT" in item.value
+            "Next available delivery: Monday, October 12, 2026 · order by Sunday, October 11, 2026 at 12:00 PM EDT" in item.value
             for item in self.app.markdown
         ))
         self.assertTrue(any(
-            "The next orderable delivery is unknown until the missing cutoff is confirmed." in item.value
-            for item in self.app.markdown
+            "Ask the supplier for the order cutoff to confirm the next available delivery." in item.value
+            for item in self.app.info
         ))
 
     def test_saved_update_clears_the_draft_and_cannot_be_saved_again(self):
         self.app.run()
         self.app.selectbox(key="update_supplier").set_value("V2").run()
-        self.app.radio(key="update_kind").set_value("Confirmed correction")
+        self.app.radio(key="update_kind").set_value("Confirmed schedule change")
         self.app.text_area(key="update_message").set_value("SIMULATED: Juniper confirms Monday/Thursday temporarily, noon the day before.")
         self.app.multiselect(key="update_weekdays").set_value(["Monday", "Thursday"])
         self.app.checkbox(key="update_cutoff_known").check().run()
@@ -398,7 +481,7 @@ class AppTests(unittest.TestCase):
         next(button for button in self.app.button if button.label == "Save delivery update").click().run()
 
         self.assertEqual(len(self.app.exception), 0)
-        self.assertEqual(self.generate.call_count, 2)
+        self.generate.assert_not_called()
         self.assertEqual(self.app.selectbox(key="update_supplier").value, "V2")
         self.assertIsNone(self.app.radio(key="update_kind").value)
         self.assertEqual(self.app.text_area(key="update_message").value, "")
@@ -416,7 +499,7 @@ class AppTests(unittest.TestCase):
 
         next(button for button in self.app.button if button.label == "Save delivery update").click().run()
         self.assertEqual(len(self.app.exception), 0)
-        self.assertEqual(self.generate.call_count, 2)
+        self.generate.assert_not_called()
         self.assertTrue(any("Choose whether" in item.value for item in self.app.error))
         with closing(sqlite3.connect(self.db_path)) as connection:
             self.assertEqual(connection.execute("SELECT COUNT(*) FROM source_updates").fetchone()[0], 1)
@@ -426,7 +509,7 @@ class AppTests(unittest.TestCase):
         self.app.run()
         with closing(sqlite3.connect(self.db_path)) as connection:
             original_rule_count = connection.execute("SELECT COUNT(*) FROM delivery_rules").fetchone()[0]
-        self.app.radio(key="update_kind").set_value("Confirmed correction")
+        self.app.radio(key="update_kind").set_value("Confirmed schedule change")
         self.app.text_area(key="update_message").set_value("SIMULATED: Alder confirms Monday/Thursday temporarily, noon the day before.")
         self.app.multiselect(key="update_weekdays").set_value(["Monday", "Thursday"])
         self.app.checkbox(key="update_cutoff_known").check().run()
@@ -450,14 +533,14 @@ class AppTests(unittest.TestCase):
         self.assertNotIn("update_lead_days", [widget.key for widget in self.app.number_input])
         self.assertNotIn("update_cutoff_time", [widget.key for widget in self.app.time_input])
         self.assertNotIn("update_end", [widget.key for widget in self.app.date_input])
-        self.generate.assert_called_once()
+        self.generate.assert_not_called()
         with closing(sqlite3.connect(self.db_path)) as connection:
             self.assertEqual(connection.execute("SELECT COUNT(*) FROM source_updates").fetchone()[0], 0)
             self.assertEqual(connection.execute("SELECT COUNT(*) FROM delivery_rules").fetchone()[0], original_rule_count)
         self.app.date_input(key="update_start").set_value(date(2026, 10, 20)).run()
         self.app.checkbox(key="update_expires").check().run()
         self.assertEqual(self.app.date_input(key="update_end").value, date(2026, 10, 20))
-        self.generate.assert_called_once()
+        self.generate.assert_not_called()
 
     def test_cutoff_and_expiry_controls_toggle_without_model_calls(self):
         self.app.run()
@@ -480,11 +563,11 @@ class AppTests(unittest.TestCase):
         self.app.checkbox(key="update_expires").uncheck().run()
         self.assertNotIn("update_end", [widget.key for widget in self.app.date_input])
         self.assertEqual(len(self.app.exception), 0)
-        self.generate.assert_called_once()
+        self.generate.assert_not_called()
 
     def test_hidden_cutoff_and_end_are_saved_as_unknown_even_after_entry(self):
         self.app.run()
-        self.app.radio(key="update_kind").set_value("Confirmed correction")
+        self.app.radio(key="update_kind").set_value("Confirmed schedule change")
         self.app.text_area(key="update_message").set_value("SIMULATED: Monday/Thursday; cutoff and end date unconfirmed.")
         self.app.multiselect(key="update_weekdays").set_value(["Monday", "Thursday"])
         self.app.checkbox(key="update_cutoff_known").check().run()
@@ -495,11 +578,11 @@ class AppTests(unittest.TestCase):
         self.app.run()
         self.app.checkbox(key="update_cutoff_known").uncheck()
         self.app.checkbox(key="update_expires").uncheck().run()
-        self.generate.assert_called_once()
+        self.generate.assert_not_called()
         next(button for button in self.app.button if button.label == "Save delivery update").click().run()
 
         self.assertEqual(len(self.app.exception), 0)
-        self.assertEqual(self.generate.call_count, 2)
+        self.generate.assert_not_called()
         with closing(sqlite3.connect(self.db_path)) as connection:
             row = connection.execute(
                 "SELECT lead_days, cutoff_time, effective_to FROM delivery_rules WHERE id = 'RULE-UPD-001'"
@@ -508,7 +591,7 @@ class AppTests(unittest.TestCase):
 
     def test_confirmed_cutoff_requires_both_fields_without_saving_partial_updates(self):
         self.app.run()
-        self.app.radio(key="update_kind").set_value("Confirmed correction")
+        self.app.radio(key="update_kind").set_value("Confirmed schedule change")
         self.app.text_area(key="update_message").set_value("SIMULATED: Alder confirms Monday/Thursday with a cutoff.")
         self.app.multiselect(key="update_weekdays").set_value(["Monday", "Thursday"])
         self.app.checkbox(key="update_cutoff_known").check().run()
@@ -528,11 +611,11 @@ class AppTests(unittest.TestCase):
                 with closing(sqlite3.connect(self.db_path)) as connection:
                     self.assertEqual(connection.execute("SELECT COUNT(*) FROM source_updates").fetchone()[0], 0)
                     self.assertEqual(connection.execute("SELECT COUNT(*) FROM delivery_rules").fetchone()[0], original_rule_count)
-                self.generate.assert_called_once()
+                self.generate.assert_not_called()
 
     def test_storage_failure_preserves_the_draft_without_exposing_database_details(self):
         self.app.run()
-        self.app.radio(key="update_kind").set_value("Confirmed correction")
+        self.app.radio(key="update_kind").set_value("Confirmed schedule change")
         message = "Alder confirms Monday and Thursday deliveries."
         self.app.text_area(key="update_message").set_value(message)
         self.app.multiselect(key="update_weekdays").set_value(["Monday", "Thursday"])
@@ -545,13 +628,13 @@ class AppTests(unittest.TestCase):
         self.assertEqual(self.app.text_area(key="update_message").value, message)
         self.assertIn("The delivery update could not be saved. Please try again.", [item.value for item in self.app.error])
         self.assertNotIn(detail, [item.value for item in self.app.error])
-        self.generate.assert_called_once()
+        self.generate.assert_not_called()
 
     def test_example_question_uses_the_chat_flow_once(self):
         self.app.run()
         next(button for button in self.app.button if button.label == "What changed last week?").click().run()
         self.assertEqual(len(self.app.exception), 0)
-        self.assertEqual(self.generate.call_count, 2)
+        self.assertEqual(self.generate.call_count, 1)
         question = "What changed in sales last week compared with the previous week?"
         self.assertEqual(self.generate.call_args.args[2:], (question, []))
         self.assertEqual(len(self.app.session_state["messages"]), 1)
@@ -559,7 +642,7 @@ class AppTests(unittest.TestCase):
         self.assertIsNotNone(self.app.session_state["messages"][0]["result"])
         self.assertNotIn("What changed last week?", [button.label for button in self.app.button])
         self.app.run()
-        self.assertEqual(self.generate.call_count, 2)
+        self.assertEqual(self.generate.call_count, 1)
 
 
 if __name__ == "__main__":

@@ -1,4 +1,5 @@
 import copy
+import math
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -34,6 +35,8 @@ class PresentationTests(unittest.TestCase):
             displayed_columns = call.kwargs["column_order"]
             self.assertEqual(set(displayed_columns), set(call.args[0][0]))
             self.assertNotEqual(displayed_columns[0], "row_id")
+            for field in {"row_id", "catalog_row_id", "vendor_id"} & set(call.args[0][0]):
+                self.assertIsNone(call.kwargs["column_config"][field])
             if filename == "data/inventory_counts.csv":
                 self.assertEqual(displayed_columns[:4], ["ingredient_name", "quantity", "unit", "counted_at"])
                 self.assertEqual(displayed_columns[-1], "row_id")
@@ -97,8 +100,8 @@ class PresentationTests(unittest.TestCase):
         self.assertEqual(len(app.exception), 0)
         self.assertEqual(app.metric[0].value, "$11,407.00")
         rows = [row for table in app.dataframe for row in table.value.to_dict("records")]
-        self.assertTrue(any(row.get("Net sales (USD)") == "11407" for row in rows))
-        self.assertTrue(any(row.get("Menu ID") == "M05" and row.get("Portions change") == "8" for row in rows))
+        self.assertTrue(any(row.get("Net sales (USD)") == 11407 for row in rows))
+        self.assertTrue(any(row.get("Menu ID") == "M05" and row.get("Portions change") == 8 for row in rows))
         for table in app.dataframe:
             if "Menu item" in table.value.columns:
                 self.assertEqual(table.value.columns[0], "Menu item")
@@ -108,24 +111,24 @@ class PresentationTests(unittest.TestCase):
         app.selectbox(key="sales_week").set_value(1).run()
         rows = [row for table in app.dataframe for row in table.value.to_dict("records")]
         breakfast = next(row for row in rows if row.get("Menu ID") == "M05" and "Portions change (%)" in row)
-        self.assertEqual(breakfast["Net sales change (%)"], "—")
-        self.assertEqual(breakfast["Portions change (%)"], "—")
+        self.assertTrue(math.isnan(breakfast["Net sales change (%)"]))
+        self.assertTrue(math.isnan(breakfast["Portions change (%)"]))
         self.assertTrue(any("— means there is no nonzero prior value" in caption.value for caption in app.caption))
 
         app.selectbox(key="analysis_section").set_value("Purchasing").run()
         self.assertEqual(len(app.exception), 0)
         rows = [row for table in app.dataframe for row in table.value.to_dict("records")]
-        self.assertTrue(any(row.get("Invoice") == "INV-009" and row.get("Difference (USD)") == "47.5" for row in rows))
-        self.assertTrue(any(row.get("Invoice") == "INV-010" and row.get("Difference (USD)") == "378" for row in rows))
-        self.assertTrue(any(row.get("Supplier") == "Alder Wholesale" and row.get("Purchases (USD)") == "844.2" for row in rows))
+        self.assertTrue(any(row.get("Invoice") == "INV-009" and row.get("Difference (USD)") == 47.5 for row in rows))
+        self.assertTrue(any(row.get("Invoice") == "INV-010" and row.get("Difference (USD)") == 378 for row in rows))
+        self.assertTrue(any(row.get("Supplier") == "Alder Wholesale" and row.get("Purchases (USD)") == 844.2 for row in rows))
         oil = next(row for row in rows if row.get("Ingredient") == "Canola oil" and "Spend change (%)" in row)
-        self.assertEqual(oil["Quantity change (%)"], "—")
-        self.assertEqual(oil["Spend change (%)"], "—")
-        self.assertEqual(oil["Spend change (USD)"], "42")
+        self.assertTrue(math.isnan(oil["Quantity change (%)"]))
+        self.assertTrue(math.isnan(oil["Spend change (%)"]))
+        self.assertEqual(oil["Spend change (USD)"], 42)
         mismatch = next(row for row in rows if row.get("Invoice") == "INV-009")
-        self.assertEqual(mismatch["Multiple"], "—")
+        self.assertTrue(math.isnan(mismatch["Multiple"]))
         price_exception = next(row for row in rows if row.get("Invoice") == "INV-010")
-        self.assertEqual(price_exception["Multiple"], "10")
+        self.assertEqual(price_exception["Multiple"], 10)
         excluded = next(row for row in rows if row.get("Invoice") == "INV-099")
         self.assertEqual(excluded["Invoice date"], "2026-10-04")
         self.assertEqual(excluded["Delivery date"], "2026-10-06")
@@ -138,12 +141,12 @@ class PresentationTests(unittest.TestCase):
         self.assertEqual(len(app.exception), 0)
         rows = app.dataframe[0].value.to_dict("records")
         chicken = next(row for row in rows if row["Ingredient"] == "Chicken thigh boneless skinless")
-        self.assertEqual(chicken["Included receipts"], "540")
-        self.assertEqual(chicken["Known recipe usage"], "519.1")
-        self.assertEqual(chicken["Unexplained difference"], "5")
+        self.assertEqual(chicken["Included receipts"], 540)
+        self.assertEqual(chicken["Known recipe usage"], 519.1)
+        self.assertEqual(chicken["Unexplained difference"], 5)
         self.assertIn("not measured waste", app.info[0].value)
         missing = app.dataframe[1].value.to_dict("records")[0]
-        self.assertEqual((missing["Menu ID"], missing["Portions"], missing["Net sales (USD)"]), ("M99", "32", "320"))
+        self.assertEqual((missing["Menu ID"], missing["Portions"], missing["Net sales (USD)"]), ("M99", 32, 320))
         self.assertEqual(app.dataframe[1].value.columns[0], "Menu item")
         self.assertEqual(app.dataframe[1].value.columns[-1], "Menu ID")
         self.assertEqual(len(app.json), 0)
@@ -152,22 +155,22 @@ class PresentationTests(unittest.TestCase):
         self.assertEqual(len(app.exception), 0)
         rows = app.dataframe[0].value.to_dict("records")
         rice = next(row for row in rows if row["Ingredient"] == "Long grain rice, dry")
-        self.assertEqual(rice["Shortfall"], "23.54")
+        self.assertEqual(rice["Shortfall"], 23.54)
         app.radio(key="restocking_scenario").set_value(1).run()
         self.assertEqual(len(app.exception), 0)
         eggs = next(row for row in app.dataframe[0].value.to_dict("records") if row["Ingredient"] == "Large shell eggs")
         self.assertEqual((eggs["Known demand"], eggs["Closing count"], eggs["Shortfall"], eggs["Minimum whole packs"]),
-                         ("272", "84", "188", "2"))
+                         (272, 84, 188, 2))
         self.assertEqual(eggs["Pack size"], "180 each / case")
         self.assertEqual(eggs["Supplier"], "Alder Wholesale")
-        self.assertEqual(eggs["Vendor ID"], "V1")
+        self.assertNotIn("Vendor ID", eggs)
         self.assertTrue(any("intervening weekday consumption" in caption.value for caption in app.caption))
         self.assertTrue(any("INV-099" in warning.value for warning in app.warning))
         self.assertEqual(len(app.json), 0)
 
         app.selectbox(key="analysis_section").set_value("Kitchen notes").run()
         self.assertEqual(len(app.exception), 0)
-        self.assertTrue(any("2026-10-03: Breakfast restored" in item.value for item in app.markdown))
+        self.assertTrue(any("October 3: Breakfast went ahead" in item.value for item in app.markdown))
         self.assertTrue(any("have not seen the cases" in markdown.value for markdown in app.markdown))
         packs = [row for table in app.dataframe for row in table.value.to_dict("records")]
         self.assertEqual(
@@ -192,7 +195,7 @@ class PresentationTests(unittest.TestCase):
             render_analysis(facts, self.sources)
         row = next(row for row in ui.dataframe.call_args_list[0].args[0]
                    if row["Ingredient"] == "Chicken thigh boneless skinless")
-        self.assertEqual(row["Unexplained difference"], "12.345")
+        self.assertEqual(row["Unexplained difference"], 12.345)
         with patch("presentation.st") as ui:
             ui.selectbox.side_effect = ["Purchasing", 2, "Canola oil"]
             render_analysis(facts, self.sources)
@@ -200,7 +203,10 @@ class PresentationTests(unittest.TestCase):
             row for call in ui.dataframe.call_args_list for row in call.args[0]
             if row.get("Ingredient") == "Canola oil" and "Spend change (%)" in row
         )
-        self.assertEqual(oil["Spend change (%)"], "—")
+        self.assertIsNone(oil["Spend change (%)"])
+        self.assertTrue(all(call.kwargs["placeholder"] == "—" for call in ui.dataframe.call_args_list))
+        ui.column_config.NumberColumn.assert_any_call(format="%.2f")
+        ui.column_config.NumberColumn.assert_any_call(format="%.1f")
         self.assertIsNone(facts["purchasing"]["changes"][1]["ingredients"]["Canola oil"]["amount"]["percent"])
         self.assertEqual(facts, before)
 

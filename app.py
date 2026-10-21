@@ -2,7 +2,7 @@ import hashlib
 import json
 import os
 import sqlite3
-from datetime import date
+from datetime import date, datetime
 from html import escape
 from pathlib import Path
 
@@ -47,8 +47,6 @@ def clear_delivery_draft():
 
 def render_report(result, facts, sources, *, key, ranked=False):
     report = result["report"]
-    if ranked:
-        st.subheader("Your morning priorities")
     for index, item in enumerate(report["items"], 1):
         with st.container(border=ranked, key=f"{'report' if ranked else 'answer'}_{key}_{index}"):
             number = f'<span class="priority-number">{index:02}</span>' if ranked else ""
@@ -75,16 +73,15 @@ def render_report(result, facts, sources, *, key, ranked=False):
                     + '</ul></div>'
                 )
             if item["evidence"]:
-                label = "Evidence & sources" if ranked else "Inspect sources"
                 count = len(item["evidence"])
-                with st.expander(f"{label} · {count} {'observation' if count == 1 else 'observations'}", icon=":material/description:"):
+                with st.expander(f"Supporting records · {count} {'observation' if count == 1 else 'observations'}", icon=":material/description:"):
                     if ranked:
                         st.markdown("\n".join(
                             f"{i}. {claim['text']}" for i, claim in enumerate(item["evidence"], 1)
                         ).replace("$", r"\$"))
                     selected = st.selectbox(
-                        "Which observation?", range(len(item["evidence"])),
-                        format_func=lambda i: f"{i + 1}. {item['evidence'][i]['text']}",
+                        "Show records for", range(len(item["evidence"])),
+                        format_func=lambda i: f"Observation {i + 1}",
                         key=f"sources_{key}_{index}",
                     )
                     refs = resolve_sources(item["evidence"][selected]["sources"], facts, sources)
@@ -94,12 +91,12 @@ def render_report(result, facts, sources, *, key, ranked=False):
 st.set_page_config(page_title="Lantern Yard · Operations", page_icon="☀", layout="wide")
 st.html("""
 <style>
-[data-testid="stMainBlockContainer"] {max-width: 1120px; padding: 4.5rem 2rem 5rem;}
-h1 {font-family: Georgia, serif !important; font-weight: 400 !important; letter-spacing: -.035em; color: #203d32 !important;}
+[data-testid="stMainBlockContainer"] {max-width: 1120px; padding: 3.5rem 2rem 4rem;}
+h1 {font-family: Georgia, serif !important; font-size: 2.25rem !important; font-weight: 400 !important; letter-spacing: -.035em; color: #203d32 !important;}
 h3 {font-size: 1.12rem !important; line-height: 1.45 !important;}
-[role="tablist"] {gap: 1.5rem; margin-bottom: 1.4rem;}
+[role="tablist"] {gap: 1.5rem; margin-bottom: .7rem;}
 [role="tab"] {font-weight: 600; padding: .65rem 0;}
-[class*="st-key-report_"] {background: #fff; border-color: #dfe5df; border-radius: 14px; padding: 1.5rem; margin-bottom: .75rem;}
+[class*="st-key-report_"] {background: #fff; border-color: #dfe5df; border-radius: 12px; padding: 1rem; margin-bottom: .5rem;}
 .priority-heading {display: flex; align-items: baseline; gap: .8rem; margin-bottom: .8rem;}
 .priority-heading h3 {margin: 0; padding: 0; font-size: 1.2rem; font-weight: 650;}
 .priority-number {font-size: .85rem; font-weight: 700; color: #547361; font-variant-numeric: tabular-nums;}
@@ -116,19 +113,19 @@ h3 {font-size: 1.12rem !important; line-height: 1.45 !important;}
 .question {background: #eef4ee; border-radius: 10px; padding: .8rem 1rem; margin-bottom: .5rem;}
 .question p {margin: .3rem 0 0; color: #243c2d; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere;}
 [class*="st-key-answer_"] .priority-heading {margin-bottom: 0;}
+[data-testid="stChatInput"] > div {border-color: #9eafa3; background: #fff;}
+[data-testid="stChatInput"]:focus-within > div {border-color: #237a57; box-shadow: 0 0 0 1px #237a57;}
 @media (max-width: 640px) {
-  [data-testid="stMainBlockContainer"] {padding: 4rem 1rem 4rem;}
-  h1 {font-size: 2rem !important;}
+  [data-testid="stMainBlockContainer"] {padding: 3.5rem 1rem 3rem;}
+  h1 {font-size: 1.8rem !important;}
   [role="tablist"] {gap: .5rem;}
   [class*="st-key-report_"] {padding: 1rem;}
   .priority-heading h3 {font-size: 1.05rem;}
 }
 </style>
-<div class="eyebrow">LANTERN YARD KITCHEN · OPERATIONS</div>
 """)
-st.title("Morning operations")
-st.caption("Monday, October 5, 2026 · 6:00 AM New York")
-st.caption("Records: September 14–October 4 · Last inventory count: October 4 after closing")
+st.title("Lantern Yard Kitchen")
+st.caption("Monday, October 5, 2026 · 6:00 AM · New York")
 
 db_path = Path(os.environ.get("MARBLE_DB_PATH", str(ROOT / ".local" / "memory.sqlite3")))
 initialize(db_path)
@@ -143,55 +140,55 @@ brief_tab, chat_tab, delivery_tab, records_tab = st.tabs([
 ])
 if "messages" not in st.session_state:
     st.session_state.messages = []
+if "brief" not in st.session_state:
+    st.session_state.brief = None
+    st.session_state.brief_revision = None
+    st.session_state.brief_error = None
 
 with brief_tab:
-    if st.session_state.get("brief_revision") != revision:
-        st.session_state.brief_revision = revision
-        st.session_state.brief = None
-        st.session_state.brief_error = None
-        with st.spinner("Preparing your morning brief. This can take a minute…", show_time=True):
+    st.subheader("Morning brief")
+    st.caption("Priorities for stock, purchasing and deliveries, based on records through October 4.")
+    if st.session_state.brief is not None and st.session_state.brief_revision != revision:
+        st.warning("Delivery schedules have changed. Refresh the morning brief before using its ordering advice.")
+    action = "Prepare morning brief" if st.session_state.brief is None else "Refresh morning brief"
+    if st.session_state.brief_error:
+        action = "Retry morning brief"
+    brief_action = st.empty()
+    if brief_action.button(action, type="primary", key="prepare_brief"):
+        brief_action.empty()
+        with st.spinner("Preparing your morning brief…", show_time=True):
             try:
                 st.session_state.brief = generate(facts, sources)
             except (OpenAIError, ValueError, RuntimeError) as exc:
                 st.session_state.brief_error = str(exc)
+            else:
+                st.session_state.brief_revision = revision
+                st.session_state.brief_error = None
+        st.rerun()
+    if st.session_state.brief_error:
+        st.error("The morning brief could not be updated. Your records and delivery schedules are still available.")
     if st.session_state.brief is not None:
         render_report(st.session_state.brief, facts, sources, key="brief", ranked=True)
-    else:
-        st.error("The morning brief could not be generated. Your records and delivery rules are still available.")
-        if st.button("Retry morning brief"):
-            st.session_state.brief_revision = None
-            st.rerun()
 
 with chat_tab:
     st.subheader("Ask about your operation")
     st.caption("Type your own question about sales, stock, purchasing or deliveries.")
-    for index, turn in enumerate(st.session_state.messages):
-        with st.container(key=f"question_turn_{index}"):
-            st.html(
-                '<div class="question"><span class="eyebrow">YOUR QUESTION</span>'
-                f'<p>{escape(turn["question"])}</p></div>'
-            )
-            if turn["revision"] != revision:
-                st.caption("Historical answer — delivery rules have changed since this question.")
-            if turn["result"] is not None:
-                render_report(turn["result"], facts, sources, key=f"chat_{index}")
-            else:
-                st.error("Your question could not be answered. Please try again.")
-                if st.button("Retry this answer", key=f"retry_{index}"):
-                    st.session_state.retry_question = index
-                    st.rerun()
-    question = st.chat_input("What would you like to know?")
-    if not st.session_state.messages:
-        with st.expander("Example questions"):
-            questions = {
-                "What changed last week?": "What changed in sales last week compared with the previous week?",
-                "Why did purchasing change?": "Why did purchasing as a share of sales change last week?",
-                "What needs checking before Saturday?": "What should I check before Saturday October 10, and what is still unknown?",
-            }
-            for label, prompt in questions.items():
-                if st.button(label):
-                    question = prompt
+    conversation = st.container()
+    composer = st.empty()
+    with composer.container():
+        question = st.chat_input("What would you like to know?")
+        if not st.session_state.messages:
+            with st.expander("Example questions"):
+                questions = {
+                    "What changed last week?": "What changed in sales last week compared with the previous week?",
+                    "Why did purchasing change?": "Why did purchasing as a share of sales change last week?",
+                    "What needs checking before Saturday?": "What should I check before Saturday October 10, and what is still unknown?",
+                }
+                for label, prompt in questions.items():
+                    if st.button(label):
+                        question = prompt
     retry = st.session_state.pop("retry_question", None)
+    target = None
     if question is not None or retry is not None:
         if retry is not None and retry < len(st.session_state.messages) - 1:
             question = st.session_state.messages[retry]["question"]
@@ -203,20 +200,38 @@ with chat_tab:
             target = len(st.session_state.messages) - 1
         else:
             target = retry
-        history = []
-        for old in st.session_state.messages[:target]:
-            history.append({"role": "user", "content": old["question"]})
-            if old["result"] is not None:
-                prefix = "Historical answer under now-obsolete delivery rules: " if old["revision"] != revision else ""
-                history.append({"role": "assistant", "content": prefix + json.dumps(old["result"]["report"])})
-        turn = st.session_state.messages[target]
-        turn["revision"] = revision
-        with st.spinner("Checking the records. This can take a minute…", show_time=True):
-            try:
-                turn["result"] = generate(facts, sources, turn["question"], history)
-                turn["error"] = None
-            except (OpenAIError, ValueError, RuntimeError) as exc:
-                turn["error"] = str(exc)
+        composer.empty()
+    with conversation:
+        for index, turn in enumerate(st.session_state.messages):
+            with st.container(key=f"question_turn_{index}"):
+                st.html(
+                    '<div class="question"><span class="eyebrow">YOUR QUESTION</span>'
+                    f'<p>{escape(turn["question"])}</p></div>'
+                )
+                if index == target:
+                    history = []
+                    for old in st.session_state.messages[:target]:
+                        history.append({"role": "user", "content": old["question"]})
+                        if old["result"] is not None:
+                            prefix = "Historical answer under now-obsolete delivery rules: " if old["revision"] != revision else ""
+                            history.append({"role": "assistant", "content": prefix + json.dumps(old["result"]["report"])})
+                    turn["revision"] = revision
+                    with st.spinner("Checking the records…", show_time=True):
+                        try:
+                            turn["result"] = generate(facts, sources, turn["question"], history)
+                            turn["error"] = None
+                        except (OpenAIError, ValueError, RuntimeError) as exc:
+                            turn["error"] = str(exc)
+                if turn["revision"] != revision:
+                    st.caption("Historical answer — delivery schedules have changed since this question.")
+                if turn["result"] is not None:
+                    render_report(turn["result"], facts, sources, key=f"chat_{index}")
+                else:
+                    st.error("Your question could not be answered. Please try again.")
+                    if st.button("Retry this answer", key=f"retry_{index}"):
+                        st.session_state.retry_question = index
+                        st.rerun()
+    if target is not None:
         st.rerun()
 
 with delivery_tab:
@@ -225,53 +240,59 @@ with delivery_tab:
     saved_update = st.session_state.pop("saved_delivery_update", None)
     if saved_update:
         clear_delivery_draft()
-        if st.session_state.brief is not None:
-            st.success("Delivery update saved. Your morning brief has been updated.")
-        else:
-            st.warning("Delivery update saved. The brief could not be refreshed; retry it in Morning brief.")
+        st.success("Delivery schedule saved. Refresh the morning brief to include this change.")
+    update_form = st.container()
     for vendor in memory["vendors"]:
         with st.container(border=True):
             st.subheader(vendor["vendor_name"])
             if vendor["conflicted"] or vendor["next_conflicted"]:
-                st.warning("Conflicting delivery information. Confirm the schedule with the supplier before planning an order.")
-            elif not vendor["cutoff_known"]:
-                st.info("Confirm the order cutoff with this supplier.")
-            if vendor["next_delivery"]:
+                st.warning("Conflicting delivery information. Confirm delivery days and the order cutoff with the supplier before planning an order.")
+            elif vendor["next_delivery"]:
                 delivery, deadline = st.columns(2)
                 delivery.markdown("**Next orderable delivery**")
                 delivery.write(vendor["next_delivery_label"])
                 deadline.markdown("**Order by**")
                 deadline.write(vendor["deadline_label"])
             elif not vendor["cutoff_known"]:
-                st.write("The next orderable delivery is unknown until the missing cutoff is confirmed.")
+                st.info("Ask the supplier for the order cutoff to confirm the next available delivery.")
             else:
                 st.write("No single upcoming order window is confirmed.")
             for rule in vendor["rules"]:
                 days, cutoff_text = rule_summary(rule)
                 st.markdown(f"**{days}** · {cutoff_text}")
             if vendor["today_is_delivery"]:
-                st.caption("Scheduled today. Confirm your order and arrival time with the supplier.")
+                st.caption("Today is a regular delivery day. Check with the supplier for any expected arrival.")
             rules = {rule["id"]: rule for rule in [*vendor["rules"], *vendor["upcoming_rules"]]}
-            with st.expander(f"Schedule details & sources · {len(rules)} recorded {'rule' if len(rules) == 1 else 'rules'}"):
+            with st.expander("Schedule details and messages"):
                 for rule in rules.values():
                     days, cutoff_text = rule_summary(rule)
-                    end_text = f" through {rule['effective_to']}" if rule["effective_to"] else " · no end date recorded"
-                    st.markdown(f"**{days}** · {cutoff_text}")
-                    st.caption(f"Effective {rule['effective_from']}{end_text} · Recorded {rule['learned_at']}")
+                    starts = date.fromisoformat(rule["effective_from"])
+                    if rule["active"]:
+                        status = "Current schedule"
+                    elif starts > date(2026, 10, 5):
+                        status = f"Starts {starts:%b %d, %Y}"
+                    else:
+                        status = "Upcoming schedule"
+                    unconfirmed = vendor["conflicted"] if rule["active"] else vendor["next_conflicted"]
+                    if unconfirmed:
+                        status = f"Unconfirmed · {status.lower()}"
+                    st.markdown(f"**{status} · {days}** · {cutoff_text}")
+                    end_text = f" through {date.fromisoformat(rule['effective_to']):%b %d, %Y}" if rule["effective_to"] else ""
+                    st.caption(f"Effective {starts:%b %d, %Y}{end_text} · Recorded {datetime.fromisoformat(rule['learned_at']):%b %d, %Y at %I:%M %p}")
                     if rule["next_delivery"]:
-                        window_label = "If confirmed" if vendor["conflicted"] or vendor["next_conflicted"] else "Window under this rule"
+                        window_label = "If confirmed" if vendor["conflicted"] or vendor["next_conflicted"] else "Next available delivery"
                         st.write(f"{window_label}: {rule['next_delivery_label']} · order by {rule['deadline_label']}")
                     render_sources([rule["source_ref"]], sources)
 
-    with st.expander("Add a supplier update", icon=":material/edit_note:"):
-        st.caption("Record a confirmed change or keep a conflicting message for review. Saving updates the brief; it does not place an order.")
+    with update_form.expander("Add a supplier update", icon=":material/edit_note:"):
+        st.caption("Save a supplier's schedule change or a conflicting message. This does not place an order.")
         vendors = {item["vendor_id"]: item["vendor_name"] for item in memory["vendors"]}
         vendor_id = st.selectbox(
             "Supplier", list(vendors), format_func=vendors.__getitem__, key="update_supplier",
             on_change=clear_delivery_draft,
         )
         kind = st.radio(
-            "Message type", ["Confirmed correction", "Unresolved conflicting message"],
+            "Message type", ["Confirmed schedule change", "Conflicting supplier message"],
             index=None, key="update_kind",
             captions=["Update the schedule with confirmed information.", "Keep both messages until the supplier confirms the schedule."],
         )
@@ -286,12 +307,12 @@ with delivery_tab:
         else:
             st.caption("Order cutoff not recorded.")
         start = st.date_input("Effective from", value=date(2026, 10, 5), key="update_start")
-        expires = st.checkbox("This is a temporary rule", key="update_expires")
-        end = st.date_input("Last day this rule applies", value=max(start, date(2026, 10, 11)), key="update_end") if expires else None
+        expires = st.checkbox("Temporary schedule change", key="update_expires")
+        end = st.date_input("Last day", value=max(start, date(2026, 10, 11)), key="update_end") if expires else None
         if st.button("Save delivery update", type="primary"):
             try:
                 if kind is None:
-                    raise ValueError("Choose whether this is a confirmed correction or a conflicting message.")
+                    raise ValueError("Choose whether the schedule change is confirmed or the message conflicts with an existing schedule.")
                 if not weekdays:
                     raise ValueError("Choose at least one delivery day.")
                 if cutoff_known and (lead_days is None or cutoff is None):
@@ -302,7 +323,7 @@ with delivery_tab:
                     cutoff_time=cutoff.strftime("%H:%M") if cutoff_known else None,
                     effective_from=start.isoformat(), effective_to=end.isoformat() if expires else None,
                     source_text=source_text,
-                    kind="correction" if kind == "Confirmed correction" else "conflict",
+                    kind="correction" if kind == "Confirmed schedule change" else "conflict",
                 )
             except ValueError as exc:
                 st.error(f"Update not saved: {exc}")
@@ -319,19 +340,24 @@ with delivery_tab:
             days, cutoff_text = rule_summary(rule)
             rows.append({
                 "Supplier": rule["vendor_name"], "Delivery days": days, "Order cutoff": cutoff_text,
-                "Applies now": "Yes" if rule["active"] else "No", "Effective from": rule["effective_from"],
-                "Effective through": rule["effective_to"] or "No end date", "Recorded": rule["learned_at"],
+                "Applies now": "Yes" if rule["active"] else "No", "Effective from": date.fromisoformat(rule["effective_from"]),
+                "Effective through": date.fromisoformat(rule["effective_to"]) if rule["effective_to"] else None,
+                "Recorded": datetime.fromisoformat(rule["learned_at"]),
             })
-        st.dataframe(rows, hide_index=True, width="stretch")
+        st.dataframe(rows, hide_index=True, width="stretch", placeholder="—", column_config={
+            "Effective from": st.column_config.DateColumn(format="MMM D, YYYY"),
+            "Effective through": st.column_config.DateColumn(format="MMM D, YYYY"),
+            "Recorded": st.column_config.DatetimeColumn(format="MMM D, YYYY, h:mm a", timezone="America/New_York"),
+        })
         history_rule = st.selectbox(
             "Schedule record", list(reversed(memory["history"])),
-            format_func=lambda rule: f"{rule['vendor_name']} · effective {rule['effective_from']} · recorded {rule['learned_at']}",
+            format_func=lambda rule: f"{rule['vendor_name']} · {rule_summary(rule)[0]} · starts {date.fromisoformat(rule['effective_from']):%b %d, %Y} · recorded {datetime.fromisoformat(rule['learned_at']):%b %d, %Y at %I:%M %p}",
         )
         render_sources([history_rule["source_ref"]], sources)
 
 with records_tab:
     st.subheader("Explore the records")
-    st.caption("Calculated summaries and the original records behind them. All amounts are USD.")
+    st.caption("September 14–October 4 · Inventory last counted October 4 after closing · All amounts in USD.")
     render_analysis(facts, sources)
     section = st.session_state.analysis_section
     calculation_key = f"calculation_{section}"
@@ -363,9 +389,16 @@ with records_tab:
             group_labels = {name: " · ".join(labels.get(part, part) for part in name.split(".")) for name in groups}
             group = st.selectbox("Calculation", groups, format_func=group_labels.__getitem__, key=calculation_key)
             render_sources(facts["evidence_sets"][group], sources)
-    st.divider()
-    st.subheader("Original records")
-    files = list(dict.fromkeys(record["file"] for record in sources.values() if record["file"] in SOURCE_LABELS))
-    filename = st.selectbox("Record collection", files, format_func=SOURCE_LABELS.__getitem__)
-    refs = [ref for ref, record in sources.items() if record["file"] == filename]
-    render_sources(refs, sources)
+    with st.expander("Browse original records"):
+        files = list(dict.fromkeys(record["file"] for record in sources.values() if record["file"] in SOURCE_LABELS))
+        filename = st.selectbox("Record collection", files, format_func=SOURCE_LABELS.__getitem__)
+        refs = [ref for ref, record in sources.items() if record["file"] == filename]
+        if filename == "GM_OPS_LOG.md":
+            refs = [ref for ref in refs if sources[ref]["id"].startswith("N")]
+            note_labels = {}
+            for ref in refs:
+                _, recorded_at, author = sources[ref]["content"].splitlines()[0].split(" | ")
+                note_labels[ref] = f"{datetime.fromisoformat(recorded_at):%b %d, %Y at %I:%M %p} · {author}"
+            selected_note = st.selectbox("Notebook entry", refs, index=len(refs) - 1, format_func=note_labels.__getitem__, key="record_note")
+            refs = [selected_note]
+        render_sources(refs, sources)
