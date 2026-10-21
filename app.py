@@ -164,18 +164,7 @@ with brief_tab:
 
 with chat_tab:
     st.subheader("Ask about your operation")
-    st.caption("Ask about sales, stock, purchasing or deliveries.")
-    suggested = None
-    if not st.session_state.messages:
-        st.markdown("Start with a question")
-        questions = {
-            "What changed last week?": "What changed in sales last week compared with the previous week?",
-            "Why did purchasing change?": "Why did purchasing as a share of sales change last week?",
-            "What needs checking before Saturday?": "What should I check before Saturday October 10, and what is still unknown?",
-        }
-        for label, prompt in questions.items():
-            if st.button(label, width="stretch"):
-                suggested = prompt
+    st.caption("Type your own question about sales, stock, purchasing or deliveries.")
     for index, turn in enumerate(st.session_state.messages):
         with st.container(key=f"question_turn_{index}"):
             st.html(
@@ -191,7 +180,17 @@ with chat_tab:
                 if st.button("Retry this answer", key=f"retry_{index}"):
                     st.session_state.retry_question = index
                     st.rerun()
-    question = st.chat_input("Ask a question about these records…") or suggested
+    question = st.chat_input("What would you like to know?")
+    if not st.session_state.messages:
+        with st.expander("Example questions"):
+            questions = {
+                "What changed last week?": "What changed in sales last week compared with the previous week?",
+                "Why did purchasing change?": "Why did purchasing as a share of sales change last week?",
+                "What needs checking before Saturday?": "What should I check before Saturday October 10, and what is still unknown?",
+            }
+            for label, prompt in questions.items():
+                if st.button(label):
+                    question = prompt
     retry = st.session_state.pop("retry_question", None)
     if question is not None or retry is not None:
         if retry is not None and retry < len(st.session_state.messages) - 1:
