@@ -30,3 +30,23 @@ Start with `CANDIDATE_BRIEF.md` and `SITE_PROFILE.md`. All operational records a
 - Cite filenames and row/note IDs (invoice IDs for headers, POS item IDs for menu entries, vendor IDs for the vendor sheet). You are free to organize or transform the data internally.
 
 Keep the assignment within the brief's 2–4 hour timebox. There is no requirement to clean every record or build a production ingestion pipeline.
+
+## Setup
+
+Requires Python 3.11+ and an OpenAI API key with billing enabled and `gpt-6-astra` access.
+Dependencies: Streamlit, OpenAI SDK and Pydantic, pinned in `requirements.txt`.
+
+Run from the repository root:
+
+```sh
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements.txt
+export OPENAI_API_KEY="your-key"
+streamlit run app.py
+```
+
+Open http://localhost:8501.
+
+Each brief or answer makes one API call. Example: 20k input tokens newly cached for
+30 minutes + 2k output tokens cost about $0.35.
