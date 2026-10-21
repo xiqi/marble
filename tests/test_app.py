@@ -94,6 +94,39 @@ class AppTests(unittest.TestCase):
         self.app.run()
         self.assertEqual(self.generate.call_count, 3)
 
+    def test_calculation_choices_follow_the_analysis_and_keep_all_groups_accessible(self):
+        self.app.run()
+        groups = self.generate.call_args.args[0]["evidence_sets"]
+        visited = set()
+        categories = [
+            ("Sales", None, ("sales.",)),
+            ("Restocking", 0, ("restocking.full_week.", "missing_recipes.full_week.", "invoice.")),
+            ("Restocking", 1, ("restocking.weekend.", "missing_recipes.weekend.", "invoice.")),
+            ("Purchasing", None, ("purchasing.", "invoice.")),
+            ("Stock reconciliation", None, ("consumption.", "missing_recipes.whole_period.")),
+        ]
+        for section, scenario, prefixes in categories:
+            with self.subTest(section=section, scenario=scenario):
+                self.app.selectbox(key="analysis_section").set_value(section).run()
+                if scenario is not None:
+                    self.app.radio(key="restocking_scenario").set_value(scenario).run()
+                calculation = next(widget for widget in self.app.selectbox if widget.label == "Calculation")
+                expected = [name for name in groups if name.startswith(prefixes)]
+                self.assertCountEqual(calculation.options, [calculation.format_func(name) for name in expected])
+                self.assertTrue(calculation.value.startswith(prefixes[0]))
+                calculation.set_value(expected[-1]).run()
+                calculation = next(widget for widget in self.app.selectbox if widget.label == "Calculation")
+                self.assertEqual(calculation.value, expected[-1])
+                self.assertEqual(len(self.app.exception), 0)
+                visited.update(expected)
+        self.assertEqual(visited, set(groups))
+
+        self.app.selectbox(key="analysis_section").set_value("Context").run()
+        self.assertNotIn("Calculation", [widget.label for widget in self.app.selectbox])
+        self.assertNotIn("Trace a calculation to its inputs", [expander.label for expander in self.app.expander])
+        self.assertIn("Record collection", [widget.label for widget in self.app.selectbox])
+        self.generate.assert_called_once()
+
     def test_failed_question_remains_visible_until_explicit_retry(self):
         self.app.run()
         self.generate.side_effect = OpenAIError("Simulated API failure")
@@ -237,7 +270,7 @@ class AppTests(unittest.TestCase):
 
     def test_future_conflict_with_unknown_cutoff_still_warns_and_reaches_the_model(self):
         self.app.run()
-        self.app.selectbox(key="update_supplier").set_value("V2")
+        self.app.selectbox(key="update_supplier").set_value("V2").run()
         self.app.radio(key="update_kind").set_value("Unresolved conflicting message")
         message = "SIMULATED: Juniper says Tuesday from October 6; cutoff unknown."
         self.app.text_area(key="update_message").set_value(message)
@@ -275,6 +308,112 @@ class AppTests(unittest.TestCase):
         self.assertTrue(any("**Monday, Wednesday, Friday**" in item.value for item in details.markdown))
         self.assertTrue(any("**Tuesday**" in item.value for item in details.markdown))
         self.assertTrue(any("Effective 2026-10-06" in item.value for item in details.caption))
+
+    def test_future_confirmed_window_is_visible_when_the_current_cutoff_is_unknown(self):
+        self.app.run()
+        self.app.selectbox(key="update_supplier").set_value("V2").run()
+        self.app.radio(key="update_kind").set_value("Confirmed correction")
+        self.app.text_area(key="update_message").set_value("SIMULATED: Juniper confirms Monday, noon the day before, starting October 12.")
+        self.app.multiselect(key="update_weekdays").set_value(["Monday"])
+        self.app.checkbox(key="update_cutoff_known").check().run()
+        self.app.number_input(key="update_lead_days").set_value(1)
+        self.app.time_input(key="update_cutoff_time").set_value(time(12))
+        self.app.date_input(key="update_start").set_value(date(2026, 10, 12))
+        next(button for button in self.app.button if button.label == "Save delivery update").click().run()
+
+        self.assertEqual(len(self.app.exception), 0)
+        juniper = next(
+            vendor for vendor in self.generate.call_args.args[0]["delivery"]
+            if vendor["vendor_id"] == "V2"
+        )
+        self.assertIsNone(juniper["next_delivery"])
+        self.assertIsNone(juniper["deadline"])
+        self.assertFalse(juniper["cutoff_known"])
+        self.assertFalse(juniper["next_conflicted"])
+        self.assertTrue(any(
+            "Window under this rule: Monday, October 12, 2026 · order by Sunday, October 11, 2026 at 12:00 PM EDT" in item.value
+            for item in self.app.markdown
+        ))
+        self.assertTrue(any(
+            "The next orderable delivery is unknown until the missing cutoff is confirmed." in item.value
+            for item in self.app.markdown
+        ))
+
+    def test_saved_update_clears_the_draft_and_cannot_be_saved_again(self):
+        self.app.run()
+        self.app.selectbox(key="update_supplier").set_value("V2").run()
+        self.app.radio(key="update_kind").set_value("Confirmed correction")
+        self.app.text_area(key="update_message").set_value("SIMULATED: Juniper confirms Monday/Thursday temporarily, noon the day before.")
+        self.app.multiselect(key="update_weekdays").set_value(["Monday", "Thursday"])
+        self.app.checkbox(key="update_cutoff_known").check().run()
+        self.app.checkbox(key="update_expires").check().run()
+        self.app.number_input(key="update_lead_days").set_value(1)
+        self.app.time_input(key="update_cutoff_time").set_value(time(12))
+        self.app.date_input(key="update_start").set_value(date(2026, 10, 6))
+        self.app.date_input(key="update_end").set_value(date(2026, 10, 15))
+        next(button for button in self.app.button if button.label == "Save delivery update").click().run()
+
+        self.assertEqual(len(self.app.exception), 0)
+        self.assertEqual(self.generate.call_count, 2)
+        self.assertEqual(self.app.selectbox(key="update_supplier").value, "V2")
+        self.assertIsNone(self.app.radio(key="update_kind").value)
+        self.assertEqual(self.app.text_area(key="update_message").value, "")
+        self.assertTrue(self.app.text_area(key="update_message").proto.set_value)
+        self.assertEqual(self.app.multiselect(key="update_weekdays").value, [])
+        self.assertFalse(self.app.checkbox(key="update_cutoff_known").value)
+        self.assertFalse(self.app.checkbox(key="update_expires").value)
+        self.assertEqual(self.app.date_input(key="update_start").value, date(2026, 10, 5))
+        self.assertNotIn("update_lead_days", [widget.key for widget in self.app.number_input])
+        self.assertNotIn("update_cutoff_time", [widget.key for widget in self.app.time_input])
+        self.assertNotIn("update_end", [widget.key for widget in self.app.date_input])
+        with closing(sqlite3.connect(self.db_path)) as connection:
+            saved_rule_count = connection.execute("SELECT COUNT(*) FROM delivery_rules").fetchone()[0]
+            self.assertEqual(connection.execute("SELECT COUNT(*) FROM source_updates").fetchone()[0], 1)
+
+        next(button for button in self.app.button if button.label == "Save delivery update").click().run()
+        self.assertEqual(len(self.app.exception), 0)
+        self.assertEqual(self.generate.call_count, 2)
+        self.assertTrue(any("Choose whether" in item.value for item in self.app.error))
+        with closing(sqlite3.connect(self.db_path)) as connection:
+            self.assertEqual(connection.execute("SELECT COUNT(*) FROM source_updates").fetchone()[0], 1)
+            self.assertEqual(connection.execute("SELECT COUNT(*) FROM delivery_rules").fetchone()[0], saved_rule_count)
+
+    def test_changing_supplier_clears_the_draft_without_saving_or_generating(self):
+        self.app.run()
+        with closing(sqlite3.connect(self.db_path)) as connection:
+            original_rule_count = connection.execute("SELECT COUNT(*) FROM delivery_rules").fetchone()[0]
+        self.app.radio(key="update_kind").set_value("Confirmed correction")
+        self.app.text_area(key="update_message").set_value("SIMULATED: Alder confirms Monday/Thursday temporarily, noon the day before.")
+        self.app.multiselect(key="update_weekdays").set_value(["Monday", "Thursday"])
+        self.app.checkbox(key="update_cutoff_known").check().run()
+        self.app.checkbox(key="update_expires").check().run()
+        self.app.number_input(key="update_lead_days").set_value(1)
+        self.app.time_input(key="update_cutoff_time").set_value(time(12))
+        self.app.date_input(key="update_start").set_value(date(2026, 10, 6))
+        self.app.date_input(key="update_end").set_value(date(2026, 10, 15))
+        self.app.run()
+
+        self.app.selectbox(key="update_supplier").set_value("V2").run()
+        self.assertEqual(len(self.app.exception), 0)
+        self.assertEqual(self.app.selectbox(key="update_supplier").value, "V2")
+        self.assertIsNone(self.app.radio(key="update_kind").value)
+        self.assertEqual(self.app.text_area(key="update_message").value, "")
+        self.assertTrue(self.app.text_area(key="update_message").proto.set_value)
+        self.assertEqual(self.app.multiselect(key="update_weekdays").value, [])
+        self.assertFalse(self.app.checkbox(key="update_cutoff_known").value)
+        self.assertFalse(self.app.checkbox(key="update_expires").value)
+        self.assertEqual(self.app.date_input(key="update_start").value, date(2026, 10, 5))
+        self.assertNotIn("update_lead_days", [widget.key for widget in self.app.number_input])
+        self.assertNotIn("update_cutoff_time", [widget.key for widget in self.app.time_input])
+        self.assertNotIn("update_end", [widget.key for widget in self.app.date_input])
+        self.generate.assert_called_once()
+        with closing(sqlite3.connect(self.db_path)) as connection:
+            self.assertEqual(connection.execute("SELECT COUNT(*) FROM source_updates").fetchone()[0], 0)
+            self.assertEqual(connection.execute("SELECT COUNT(*) FROM delivery_rules").fetchone()[0], original_rule_count)
+        self.app.date_input(key="update_start").set_value(date(2026, 10, 20)).run()
+        self.app.checkbox(key="update_expires").check().run()
+        self.assertEqual(self.app.date_input(key="update_end").value, date(2026, 10, 20))
+        self.generate.assert_called_once()
 
     def test_cutoff_and_expiry_controls_toggle_without_model_calls(self):
         self.app.run()

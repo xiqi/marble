@@ -67,6 +67,9 @@ establish stock coverage through the weekend or justify lower ordering urgency.
 Do not assume future market attendance, extra demand, vendor capacity, or unknown cutoffs.
 Never claim a future delivery covers consumption before it arrives; a delivery
 schedule alone does not establish that enough stock has been ordered.
+A scheduled delivery day proves neither an existing order nor the ability to
+place or change one today. Before suggesting additions to today's order, the
+next step must first confirm that order and whether changes are still possible.
 Use APP_ANALYSIS.delivery to decide whether today is a scheduled delivery day and
 whether a cutoff has passed. Copy next_delivery_label and deadline_label exactly
 when stating dates and weekdays; never derive a weekday from an ISO date yourself.

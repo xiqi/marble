@@ -31,6 +31,20 @@ def rule_summary(rule):
     return days, cutoff
 
 
+def clear_delivery_draft():
+    st.session_state.update({
+        "update_kind": None,
+        "update_message": "",
+        "update_weekdays": [],
+        "update_cutoff_known": False,
+        "update_lead_days": None,
+        "update_cutoff_time": None,
+        "update_start": date(2026, 10, 5),
+        "update_expires": False,
+    })
+    st.session_state.pop("update_end", None)
+
+
 def render_report(result, facts, sources, *, key, ranked=False):
     report = result["report"]
     if ranked:
@@ -213,6 +227,7 @@ with delivery_tab:
     st.caption("All times are New York time. A recorded route is not a confirmed order or arrival.")
     saved_update = st.session_state.pop("saved_delivery_update", None)
     if saved_update:
+        clear_delivery_draft()
         if st.session_state.brief is not None:
             st.success(f"Delivery update {saved_update} saved. Your morning brief has been updated.")
         else:
@@ -246,14 +261,18 @@ with delivery_tab:
                     end_text = f" through {rule['effective_to']}" if rule["effective_to"] else " · no end date recorded"
                     st.markdown(f"**{days}** · {cutoff_text}")
                     st.caption(f"Effective {rule['effective_from']}{end_text} · Recorded {rule['learned_at']}")
-                    if (vendor["conflicted"] or vendor["next_conflicted"]) and rule["next_delivery"]:
-                        st.write(f"If confirmed: {rule['next_delivery_label']} · order by {rule['deadline_label']}")
+                    if rule["next_delivery"]:
+                        window_label = "If confirmed" if vendor["conflicted"] or vendor["next_conflicted"] else "Window under this rule"
+                        st.write(f"{window_label}: {rule['next_delivery_label']} · order by {rule['deadline_label']}")
                     render_sources([rule["source_ref"]], sources)
 
     with st.expander("Add a supplier update", icon=":material/edit_note:"):
         st.caption("Record a confirmed change or keep a conflicting message for review. Saving updates the brief; it does not place an order.")
         vendors = {item["vendor_id"]: item["vendor_name"] for item in memory["vendors"]}
-        vendor_id = st.selectbox("Supplier", list(vendors), format_func=vendors.__getitem__, key="update_supplier")
+        vendor_id = st.selectbox(
+            "Supplier", list(vendors), format_func=vendors.__getitem__, key="update_supplier",
+            on_change=clear_delivery_draft,
+        )
         kind = st.radio(
             "Message type", ["Confirmed correction", "Unresolved conflicting message"],
             index=None, key="update_kind",
@@ -261,7 +280,7 @@ with delivery_tab:
         )
         source_text = st.text_area("Original supplier message", key="update_message", placeholder="Paste or transcribe the supplier's exact message…")
         weekdays = st.multiselect("Delivery days", WEEKDAYS, key="update_weekdays")
-        cutoff_known = st.checkbox("I have a confirmed order cutoff", key="update_cutoff_known")
+        cutoff_known = st.checkbox("The message includes an order cutoff", key="update_cutoff_known")
         lead_days, cutoff = None, None
         if cutoff_known:
             lead_col, time_col = st.columns(2)
@@ -316,22 +335,37 @@ with delivery_tab:
 with records_tab:
     st.subheader("Explore the records")
     st.caption("Calculated summaries and the original records behind them. All amounts are USD.")
-    render_analysis(facts)
-    with st.expander("Trace a calculation to its inputs", icon=":material/account_tree:"):
-        labels = {
-            "sales": "Sales", "purchasing": "Purchases", "change": "Change", "ingredient": "Ingredient",
-            "vendor": "Supplier", "prices": "Unit prices", "consumption": "Stock reconciliation",
-            "restocking": "Restocking", "whole_period": "Sep 14–Oct 4", "full_week": "Full-week baseline",
-            "weekend": "Weekend-only baseline", "missing_recipes": "Missing recipes", "invoice": "Invoice",
-            "anomaly": "Invoice review", "invoice_total_mismatch": "Header / line mismatch",
-            "price_differs_from_same_sku_median": "Price comparison",
-            "week_1": "Sep 14–20", "week_2": "Sep 21–27", "week_3": "Sep 28–Oct 4",
-        }
-        labels.update({record["id"]: record["content"]["name"] for record in sources.values() if record["file"] == "data/menu.csv"})
-        labels.update({vendor["vendor_id"]: vendor["vendor_name"] for vendor in memory["vendors"]})
-        group_labels = {name: " · ".join(labels.get(part, part) for part in name.split(".")) for name in facts["evidence_sets"]}
-        group = st.selectbox("Calculation", list(group_labels), format_func=group_labels.__getitem__)
-        render_sources(facts["evidence_sets"][group], sources)
+    render_analysis(facts, sources)
+    section = st.session_state.analysis_section
+    calculation_key = f"calculation_{section}"
+    if section == "Restocking":
+        scenario = facts["restocking"]["scenarios"][st.session_state.restocking_scenario]["id"]
+        prefixes = (f"restocking.{scenario}.", f"missing_recipes.{scenario}.", "invoice.")
+        calculation_key += f"_{scenario}"
+    else:
+        prefixes = {
+            "Sales": ("sales.",),
+            "Purchasing": ("purchasing.", "invoice."),
+            "Stock reconciliation": ("consumption.", "missing_recipes.whole_period."),
+            "Context": (),
+        }[section]
+    groups = [name for prefix in prefixes for name in facts["evidence_sets"] if name.startswith(prefix)]
+    if groups:
+        with st.expander("Trace a calculation to its inputs", icon=":material/account_tree:"):
+            labels = {
+                "sales": "Sales", "purchasing": "Purchases", "change": "Change", "ingredient": "Ingredient",
+                "vendor": "Supplier", "prices": "Unit prices", "consumption": "Stock reconciliation",
+                "restocking": "Restocking", "whole_period": "Sep 14–Oct 4", "full_week": "Full-week baseline",
+                "weekend": "Weekend-only baseline", "missing_recipes": "Missing recipes", "invoice": "Invoice",
+                "anomaly": "Invoice review", "invoice_total_mismatch": "Header / line mismatch",
+                "price_differs_from_same_sku_median": "Price comparison",
+                "week_1": "Sep 14–20", "week_2": "Sep 21–27", "week_3": "Sep 28–Oct 4",
+            }
+            labels.update({record["id"]: record["content"]["name"] for record in sources.values() if record["file"] == "data/menu.csv"})
+            labels.update({vendor["vendor_id"]: vendor["vendor_name"] for vendor in memory["vendors"]})
+            group_labels = {name: " · ".join(labels.get(part, part) for part in name.split(".")) for name in groups}
+            group = st.selectbox("Calculation", groups, format_func=group_labels.__getitem__, key=calculation_key)
+            render_sources(facts["evidence_sets"][group], sources)
     st.divider()
     st.subheader("Original records")
     files = list(dict.fromkeys(record["file"] for record in sources.values()))

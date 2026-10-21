@@ -49,7 +49,10 @@ SOURCE_COLUMN_LABELS = {
 
 
 def _table(rows):
-    st.dataframe(rows, hide_index=True, width="stretch")
+    st.dataframe(
+        [{key: "—" if value is None else value for key, value in row.items()} for row in rows],
+        hide_index=True, width="stretch",
+    )
 
 
 def _money(value):
@@ -60,8 +63,8 @@ def _missing_sales(items):
     if items:
         st.markdown("**Sales without an effective recipe**")
         _table([
-            {"Menu ID": item_id, "Menu item": item["name"], "Portions": item["quantity_sold"],
-             "Net sales (USD)": item["net_sales"]}
+            {"Menu item": item["name"], "Portions": item["quantity_sold"],
+             "Net sales (USD)": item["net_sales"], "Menu ID": item_id}
             for item_id, item in items.items()
         ])
 
@@ -96,7 +99,7 @@ def render_sources(refs, sources):
                 st.markdown(record["content"].replace("$", r"\$"))
 
 
-def render_analysis(facts):
+def render_analysis(facts, sources):
     section = st.selectbox(
         "Analysis", ["Sales", "Purchasing", "Stock reconciliation", "Restocking", "Context"],
         key="analysis_section",
@@ -130,28 +133,28 @@ def render_analysis(facts):
                              format_func=lambda i: f"{sales['weeks'][i]['start']} – {sales['weeks'][i]['end']}",
                              key="sales_week")
         _table([
-            {"Menu ID": item_id, "Menu item": item["name"], "Portions": item["quantity_sold"],
+            {"Menu item": item["name"], "Portions": item["quantity_sold"],
              "Net sales (USD)": item["net_sales"], "Share of net sales (%)": item["net_sales_share_percent"],
-             "Gross sales (USD)": item["gross_sales"], "Discounts (USD)": item["discounts"]}
+             "Gross sales (USD)": item["gross_sales"], "Discounts (USD)": item["discounts"], "Menu ID": item_id}
             for item_id, item in sales["weeks"][index]["menu"].items()
         ])
         if index:
             st.markdown("**Menu changes from the previous week**")
             _table([
-                {"Menu ID": item_id, "Menu item": item["name"],
+                {"Menu item": item["name"],
                  "Net sales change (USD)": item["net_sales"]["absolute"],
                  "Net sales change (%)": item["net_sales"]["percent"],
                  "Portions change": item["quantity_sold"]["absolute"],
-                 "Portions change (%)": item["quantity_sold"]["percent"]}
+                 "Portions change (%)": item["quantity_sold"]["percent"], "Menu ID": item_id}
                 for item_id, item in sales["changes"][index - 1]["menu"].items()
             ])
-        st.caption("A blank percentage has no nonzero prior value for comparison.")
+        st.caption("In change (%) columns, — means there is no nonzero prior value for comparison.")
         if sales["planned_availability_conflicts"]:
             st.warning("Recorded sales precede the planned menu start date. Sales remain included.")
             _table([
-                {"Menu ID": row["pos_item_id"], "Planned start": row["planned_available_from"],
+                {"Planned start": row["planned_available_from"],
                  "Sale date": row["business_date"], "Portions": row["quantity_sold"],
-                 "Sources": " · ".join(row["sources"])}
+                 "Sources": " · ".join(row["sources"]), "Menu ID": row["pos_item_id"]}
                 for row in sales["planned_availability_conflicts"]
             ])
 
@@ -195,6 +198,7 @@ def render_analysis(facts):
                  "Spend change (%)": row["amount"]["percent"]}
                 for name, row in purchasing["changes"][index - 1]["ingredients"].items()
             ])
+        st.caption("In change (%) columns, — means there is no nonzero prior value for comparison.")
         st.markdown("**Unit price history**")
         name = st.selectbox("Ingredient", list(purchasing["price_history"]), key="price_ingredient")
         price = purchasing["price_history"][name]
@@ -225,8 +229,10 @@ def render_analysis(facts):
                           "Comparison": f"{row['same_sku_median_unit_price']} USD/{row['unit']} median",
                           "Difference (USD)": row["difference_from_median_amount"],
                           "Multiple": row["multiple"], "Status": row["interpretation"]}
-            exceptions.append({"Invoice": row["invoice_id"], "Line": row.get("row_id", ""), **detail})
+            exceptions.append({"Invoice": row["invoice_id"], "Line": row.get("row_id", ""), **detail,
+                               "Multiple": detail.get("Multiple")})
         _table(exceptions)
+        st.caption("Multiple is shown only for price comparisons with a nonzero comparison price.")
         st.markdown("**Receipts excluded from the counted period**")
         _table([
             {"Invoice": row["invoice_id"], "Invoice date": row["invoice_date"], "Delivery date": row["delivery_date"],
@@ -291,8 +297,7 @@ def render_analysis(facts):
         st.caption("Sources: " + " · ".join(context["refrigeration"]["sources"]))
         st.markdown("**Chicken pack mapping**")
         st.write(context["sku_mapping"]["ingredient"])
-        st.caption("Catalog rows: " + " · ".join(context["sku_mapping"]["catalog_rows"]))
-        st.caption("Sources: " + " · ".join(context["sku_mapping"]["sources"]))
+        render_sources(context["sku_mapping"]["sources"], sources)
         st.markdown("**Original notebook**")
         notes = context["notes"]
         index = st.selectbox("Notebook entry", range(len(notes)), index=len(notes) - 1,

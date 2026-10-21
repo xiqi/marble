@@ -74,7 +74,7 @@ class PresentationTests(unittest.TestCase):
             "from presentation import render_analysis\n"
             f"facts, sources = build_facts(Path({str(ROOT)!r}))\n"
             "facts['delivery'] = [record['content'] for record in sources.values() if record['file'] == 'data/vendors.csv']\n"
-            "render_analysis(facts)\n",
+            "render_analysis(facts, sources)\n",
             default_timeout=10,
         ).run()
         self.assertEqual(len(app.exception), 0)
@@ -82,7 +82,18 @@ class PresentationTests(unittest.TestCase):
         rows = [row for table in app.dataframe for row in table.value.to_dict("records")]
         self.assertTrue(any(row.get("Net sales (USD)") == "11407" for row in rows))
         self.assertTrue(any(row.get("Menu ID") == "M05" and row.get("Portions change") == "8" for row in rows))
+        for table in app.dataframe:
+            if "Menu item" in table.value.columns:
+                self.assertEqual(table.value.columns[0], "Menu item")
+                self.assertEqual(table.value.columns[-1], "Menu ID")
         self.assertEqual(len(app.json), 0)
+
+        app.selectbox(key="sales_week").set_value(1).run()
+        rows = [row for table in app.dataframe for row in table.value.to_dict("records")]
+        breakfast = next(row for row in rows if row.get("Menu ID") == "M05" and "Portions change (%)" in row)
+        self.assertEqual(breakfast["Net sales change (%)"], "—")
+        self.assertEqual(breakfast["Portions change (%)"], "—")
+        self.assertTrue(any("— means there is no nonzero prior value" in caption.value for caption in app.caption))
 
         app.selectbox(key="analysis_section").set_value("Purchasing").run()
         self.assertEqual(len(app.exception), 0)
@@ -90,11 +101,20 @@ class PresentationTests(unittest.TestCase):
         self.assertTrue(any(row.get("Invoice") == "INV-009" and row.get("Difference (USD)") == "47.5" for row in rows))
         self.assertTrue(any(row.get("Invoice") == "INV-010" and row.get("Difference (USD)") == "378" for row in rows))
         self.assertTrue(any(row.get("Supplier") == "Alder Wholesale" and row.get("Purchases (USD)") == "844.2" for row in rows))
+        oil = next(row for row in rows if row.get("Ingredient") == "Canola oil" and "Spend change (%)" in row)
+        self.assertEqual(oil["Quantity change (%)"], "—")
+        self.assertEqual(oil["Spend change (%)"], "—")
+        self.assertEqual(oil["Spend change (USD)"], "42")
+        mismatch = next(row for row in rows if row.get("Invoice") == "INV-009")
+        self.assertEqual(mismatch["Multiple"], "—")
+        price_exception = next(row for row in rows if row.get("Invoice") == "INV-010")
+        self.assertEqual(price_exception["Multiple"], "10")
         excluded = next(row for row in rows if row.get("Invoice") == "INV-099")
         self.assertEqual(excluded["Invoice date"], "2026-10-04")
         self.assertEqual(excluded["Delivery date"], "2026-10-06")
         self.assertIn("physical receipt", excluded["Why excluded"])
         self.assertTrue(any("Not COGS" in caption.value for caption in app.caption))
+        self.assertTrue(any("— means there is no nonzero prior value" in caption.value for caption in app.caption))
         self.assertEqual(len(app.json), 0)
 
         app.selectbox(key="analysis_section").set_value("Stock reconciliation").run()
@@ -107,6 +127,8 @@ class PresentationTests(unittest.TestCase):
         self.assertIn("not measured waste", app.info[0].value)
         missing = app.dataframe[1].value.to_dict("records")[0]
         self.assertEqual((missing["Menu ID"], missing["Portions"], missing["Net sales (USD)"]), ("M99", "32", "320"))
+        self.assertEqual(app.dataframe[1].value.columns[0], "Menu item")
+        self.assertEqual(app.dataframe[1].value.columns[-1], "Menu ID")
         self.assertEqual(len(app.json), 0)
 
         app.selectbox(key="analysis_section").set_value("Restocking").run()
@@ -130,6 +152,13 @@ class PresentationTests(unittest.TestCase):
         self.assertEqual(len(app.exception), 0)
         self.assertTrue(any("not an open-ended cancellation" in caption.value for caption in app.caption))
         self.assertTrue(any("have not seen the cases" in markdown.value for markdown in app.markdown))
+        packs = [row for table in app.dataframe for row in table.value.to_dict("records")]
+        self.assertEqual(
+            {row["sku"]: (row["pack_quantity"], row["pack_unit"]) for row in packs},
+            {"V1-CHICKEN": ("40", "lb"), "AW-CHK20": ("20", "lb")},
+        )
+        self.assertTrue(any("smaller 20 lb cases" in item.value for item in app.markdown))
+        self.assertFalse(any(caption.value.startswith("Catalog rows:") for caption in app.caption))
         app.selectbox(key="notebook_entry").set_value(13).run()
         self.assertTrue(any("Breakfast tacos ON today" in markdown.value for markdown in app.markdown))
         self.assertTrue(any("GM_OPS_LOG.md#N14" in caption.value for caption in app.caption))
@@ -141,10 +170,19 @@ class PresentationTests(unittest.TestCase):
         before = copy.deepcopy(facts)
         with patch("presentation.st") as ui:
             ui.selectbox.return_value = "Stock reconciliation"
-            render_analysis(facts)
+            render_analysis(facts, self.sources)
         row = next(row for row in ui.dataframe.call_args_list[0].args[0]
                    if row["Ingredient"] == "Chicken thigh boneless skinless")
         self.assertEqual(row["Unexplained difference"], "12.345")
+        with patch("presentation.st") as ui:
+            ui.selectbox.side_effect = ["Purchasing", 2, "Canola oil"]
+            render_analysis(facts, self.sources)
+        oil = next(
+            row for call in ui.dataframe.call_args_list for row in call.args[0]
+            if row.get("Ingredient") == "Canola oil" and "Spend change (%)" in row
+        )
+        self.assertEqual(oil["Spend change (%)"], "—")
+        self.assertIsNone(facts["purchasing"]["changes"][1]["ingredients"]["Canola oil"]["amount"]["percent"])
         self.assertEqual(facts, before)
 
 
