@@ -1,8 +1,10 @@
 import json
 import os
+import sqlite3
 import tempfile
 import unittest
-from datetime import date
+from contextlib import closing
+from datetime import date, time
 from pathlib import Path
 from unittest.mock import patch
 
@@ -17,8 +19,9 @@ class AppTests(unittest.TestCase):
     def setUp(self):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
+        self.db_path = Path(directory.name) / "memory.sqlite"
         environment = patch.dict(os.environ, {
-            "MARBLE_DB_PATH": str(Path(directory.name) / "memory.sqlite"),
+            "MARBLE_DB_PATH": str(self.db_path),
         })
         environment.start()
         self.addCleanup(environment.stop)
@@ -57,12 +60,17 @@ class AppTests(unittest.TestCase):
         self.assertEqual(len(self.app.exception), 0)
         self.generate.assert_called_once()
         self.assertEqual(len(self.app.session_state["brief"]["report"]["items"]), 3)
+        self.assertEqual(
+            [tab.label for tab in self.app.tabs],
+            ["Morning brief", "Questions", "Delivery", "Records"],
+        )
         self.assertTrue(any(
-            "Order by: Tuesday, October 06, 2026 at 12:00 PM EDT" in element.value
+            "Tuesday, October 06, 2026 at 12:00 PM EDT" in element.value
             for element in self.app.markdown
         ))
         self.app.run()
-        next(widget for widget in self.app.selectbox if widget.label == "Analysis").set_value("restocking").run()
+        self.app.selectbox(key="analysis_section").set_value("Restocking").run()
+        self.app.selectbox(key="analysis_section").set_value("Stock reconciliation").run()
         self.assertEqual(len(self.app.exception), 0)
         self.generate.assert_called_once()
 
@@ -114,6 +122,11 @@ class AppTests(unittest.TestCase):
         self.assertEqual(len(self.app.exception), 0)
         self.assertIsNone(self.app.session_state["brief"])
         self.assertEqual(self.generate.call_count, 1)
+        self.assertTrue(any(
+            "Your records and delivery rules are still available" in item.value
+            for item in self.app.error
+        ))
+        self.assertIn("Simulated morning API failure", [item.value for item in self.app.caption])
         self.app.run()
         self.assertEqual(self.generate.call_count, 1)
         self.generate.side_effect = self.report
@@ -147,9 +160,12 @@ class AppTests(unittest.TestCase):
         self.app.run()
         self.app.chat_input[0].set_value("When should I order from Alder?").run()
         old_revision = self.app.session_state["messages"][0]["revision"]
-        self.app.text_area[0].set_value("SIMULATED: Alder confirms Monday/Thursday, noon the day before.")
-        self.app.multiselect[0].set_value(["Monday", "Thursday"])
-        self.app.checkbox[0].set_value(True)
+        self.app.radio(key="update_kind").set_value("Confirmed correction")
+        self.app.text_area(key="update_message").set_value("SIMULATED: Alder confirms Monday/Thursday, noon the day before.")
+        self.app.multiselect(key="update_weekdays").set_value(["Monday", "Thursday"])
+        self.app.checkbox(key="update_cutoff_known").check().run()
+        self.app.number_input(key="update_lead_days").set_value(1)
+        self.app.time_input(key="update_cutoff_time").set_value(time(12))
         next(button for button in self.app.button if button.label == "Save delivery update").click().run()
         self.assertEqual(len(self.app.exception), 0)
         self.assertEqual(self.generate.call_count, 3)
@@ -161,7 +177,7 @@ class AppTests(unittest.TestCase):
         self.assertEqual(alder["next_delivery"], "2026-10-08")
         self.assertEqual(alder["deadline"], "2026-10-07T12:00:00-04:00")
         self.assertTrue(any(
-            "Order by: Wednesday, October 07, 2026 at 12:00 PM EDT" in element.value
+            "Wednesday, October 07, 2026 at 12:00 PM EDT" in element.value
             for element in self.app.markdown
         ))
         self.assertIn("source_updates#UPD-001", self.generate.call_args.args[1])
@@ -187,11 +203,14 @@ class AppTests(unittest.TestCase):
 
     def test_future_conflict_warns_and_shows_both_upcoming_rule_sources(self):
         self.app.run()
-        self.app.radio[0].set_value("Unresolved conflicting message")
-        self.app.text_area[0].set_value("SIMULATED: an unconfirmed message says Thursday from October 6.")
-        self.app.multiselect[0].set_value(["Monday", "Thursday"])
-        self.app.checkbox[0].set_value(True)
-        self.app.date_input[0].set_value(date(2026, 10, 6))
+        self.app.radio(key="update_kind").set_value("Unresolved conflicting message")
+        message = "SIMULATED: an unconfirmed message says Thursday from October 6."
+        self.app.text_area(key="update_message").set_value(message)
+        self.app.multiselect(key="update_weekdays").set_value(["Monday", "Thursday"])
+        self.app.checkbox(key="update_cutoff_known").check().run()
+        self.app.number_input(key="update_lead_days").set_value(1)
+        self.app.time_input(key="update_cutoff_time").set_value(time(12))
+        self.app.date_input(key="update_start").set_value(date(2026, 10, 6))
         next(button for button in self.app.button if button.label == "Save delivery update").click().run()
         self.assertEqual(len(self.app.exception), 0)
         self.assertEqual(self.generate.call_count, 2)
@@ -205,25 +224,25 @@ class AppTests(unittest.TestCase):
         self.assertFalse(alder["conflicted"])
         self.assertTrue(alder["next_conflicted"])
         self.assertIsNone(alder["next_delivery"])
-        rendered_rules = [
-            json.loads(element.value) for element in self.app.json
-            if '"upcoming"' in element.value
-        ]
-        alder_rules = next(
-            rules for rules in rendered_rules if rules["current"][0]["vendor_id"] == "V1"
+        details = next(
+            expander for expander in self.app.expander
+            if expander.label.startswith("Schedule details & sources")
+            and any("GM_OPS_LOG.md · N09" in item.value for item in expander.caption)
         )
-        self.assertEqual(
-            {rule["source_ref"] for rule in alder_rules["upcoming"]},
-            {"GM_OPS_LOG.md#N09", "source_updates#UPD-001"},
-        )
+        self.assertTrue(any("source_updates · UPD-001" in item.value for item in details.caption))
+        self.assertIn(message, [item.value for item in details.markdown])
+        self.assertTrue(any("**Monday, Wednesday**" in item.value for item in details.markdown))
+        self.assertTrue(any("**Monday, Thursday**" in item.value for item in details.markdown))
+        self.assertTrue(any("Effective 2026-10-06" in item.value for item in details.caption))
 
     def test_future_conflict_with_unknown_cutoff_still_warns_and_reaches_the_model(self):
         self.app.run()
-        next(widget for widget in self.app.selectbox if widget.label == "Supplier").set_value("V2")
-        self.app.radio[0].set_value("Unresolved conflicting message")
-        self.app.text_area[0].set_value("SIMULATED: Juniper says Tuesday from October 6; cutoff unknown.")
-        self.app.multiselect[0].set_value(["Tuesday"])
-        self.app.date_input[0].set_value(date(2026, 10, 6))
+        self.app.selectbox(key="update_supplier").set_value("V2")
+        self.app.radio(key="update_kind").set_value("Unresolved conflicting message")
+        message = "SIMULATED: Juniper says Tuesday from October 6; cutoff unknown."
+        self.app.text_area(key="update_message").set_value(message)
+        self.app.multiselect(key="update_weekdays").set_value(["Tuesday"])
+        self.app.date_input(key="update_start").set_value(date(2026, 10, 6))
         next(button for button in self.app.button if button.label == "Save delivery update").click().run()
         self.assertEqual(len(self.app.exception), 0)
         self.assertEqual(self.generate.call_count, 2)
@@ -243,16 +262,104 @@ class AppTests(unittest.TestCase):
         self.assertEqual(
             {rule["source_ref"] for rule in juniper["upcoming_rules"]}, expected_sources,
         )
-        rendered_rules = [
-            json.loads(element.value) for element in self.app.json
-            if '"upcoming"' in element.value
-        ]
-        juniper_rules = next(
-            rules for rules in rendered_rules if rules["current"][0]["vendor_id"] == "V2"
+        details = next(
+            expander for expander in self.app.expander
+            if expander.label.startswith("Schedule details & sources")
+            and any(
+                "vendor_id" in table.value.columns and "V2" in set(table.value["vendor_id"])
+                for table in expander.dataframe
+            )
         )
-        self.assertEqual(
-            {rule["source_ref"] for rule in juniper_rules["upcoming"]}, expected_sources,
-        )
+        self.assertTrue(any("source_updates · UPD-001" in item.value for item in details.caption))
+        self.assertIn(message, [item.value for item in details.markdown])
+        self.assertTrue(any("**Monday, Wednesday, Friday**" in item.value for item in details.markdown))
+        self.assertTrue(any("**Tuesday**" in item.value for item in details.markdown))
+        self.assertTrue(any("Effective 2026-10-06" in item.value for item in details.caption))
+
+    def test_cutoff_and_expiry_controls_toggle_without_model_calls(self):
+        self.app.run()
+        self.assertIsNone(self.app.radio(key="update_kind").value)
+        self.assertNotIn("update_lead_days", [widget.key for widget in self.app.number_input])
+        self.assertNotIn("update_cutoff_time", [widget.key for widget in self.app.time_input])
+        self.assertNotIn("update_end", [widget.key for widget in self.app.date_input])
+
+        self.app.checkbox(key="update_cutoff_known").check().run()
+        self.assertIsNone(self.app.number_input(key="update_lead_days").value)
+        self.assertIsNone(self.app.time_input(key="update_cutoff_time").value)
+        self.assertNotIn("update_end", [widget.key for widget in self.app.date_input])
+        self.app.checkbox(key="update_expires").check().run()
+        self.assertEqual(self.app.date_input(key="update_end").value, date(2026, 10, 11))
+
+        self.app.checkbox(key="update_cutoff_known").uncheck().run()
+        self.assertNotIn("update_lead_days", [widget.key for widget in self.app.number_input])
+        self.assertNotIn("update_cutoff_time", [widget.key for widget in self.app.time_input])
+        self.assertIn("update_end", [widget.key for widget in self.app.date_input])
+        self.app.checkbox(key="update_expires").uncheck().run()
+        self.assertNotIn("update_end", [widget.key for widget in self.app.date_input])
+        self.assertEqual(len(self.app.exception), 0)
+        self.generate.assert_called_once()
+
+    def test_hidden_cutoff_and_end_are_saved_as_unknown_even_after_entry(self):
+        self.app.run()
+        self.app.radio(key="update_kind").set_value("Confirmed correction")
+        self.app.text_area(key="update_message").set_value("SIMULATED: Monday/Thursday; cutoff and end date unconfirmed.")
+        self.app.multiselect(key="update_weekdays").set_value(["Monday", "Thursday"])
+        self.app.checkbox(key="update_cutoff_known").check().run()
+        self.app.checkbox(key="update_expires").check().run()
+        self.app.number_input(key="update_lead_days").set_value(1)
+        self.app.time_input(key="update_cutoff_time").set_value(time(12))
+        self.app.date_input(key="update_end").set_value(date(2026, 10, 15))
+        self.app.run()
+        self.app.checkbox(key="update_cutoff_known").uncheck()
+        self.app.checkbox(key="update_expires").uncheck().run()
+        self.generate.assert_called_once()
+        next(button for button in self.app.button if button.label == "Save delivery update").click().run()
+
+        self.assertEqual(len(self.app.exception), 0)
+        self.assertEqual(self.generate.call_count, 2)
+        with closing(sqlite3.connect(self.db_path)) as connection:
+            row = connection.execute(
+                "SELECT lead_days, cutoff_time, effective_to FROM delivery_rules WHERE id = 'RULE-UPD-001'"
+            ).fetchone()
+        self.assertEqual(row, (None, None, None))
+
+    def test_confirmed_cutoff_requires_both_fields_without_saving_partial_updates(self):
+        self.app.run()
+        self.app.radio(key="update_kind").set_value("Confirmed correction")
+        self.app.text_area(key="update_message").set_value("SIMULATED: Alder confirms Monday/Thursday with a cutoff.")
+        self.app.multiselect(key="update_weekdays").set_value(["Monday", "Thursday"])
+        self.app.checkbox(key="update_cutoff_known").check().run()
+        with closing(sqlite3.connect(self.db_path)) as connection:
+            original_rule_count = connection.execute("SELECT COUNT(*) FROM delivery_rules").fetchone()[0]
+
+        for lead_days, cutoff_time in [(None, None), (1, None), (None, time(12))]:
+            with self.subTest(lead_days=lead_days, cutoff_time=cutoff_time):
+                self.app.number_input(key="update_lead_days").set_value(lead_days)
+                self.app.time_input(key="update_cutoff_time").set_value(cutoff_time)
+                next(button for button in self.app.button if button.label == "Save delivery update").click().run()
+                self.assertEqual(len(self.app.exception), 0)
+                self.assertTrue(any(
+                    "Enter both the number of days before delivery and the cutoff time" in item.value
+                    for item in self.app.error
+                ))
+                with closing(sqlite3.connect(self.db_path)) as connection:
+                    self.assertEqual(connection.execute("SELECT COUNT(*) FROM source_updates").fetchone()[0], 0)
+                    self.assertEqual(connection.execute("SELECT COUNT(*) FROM delivery_rules").fetchone()[0], original_rule_count)
+                self.generate.assert_called_once()
+
+    def test_example_question_uses_the_chat_flow_once(self):
+        self.app.run()
+        next(button for button in self.app.button if button.label == "What changed last week?").click().run()
+        self.assertEqual(len(self.app.exception), 0)
+        self.assertEqual(self.generate.call_count, 2)
+        question = "What changed in sales last week compared with the previous week?"
+        self.assertEqual(self.generate.call_args.args[2:], (question, []))
+        self.assertEqual(len(self.app.session_state["messages"]), 1)
+        self.assertEqual(self.app.session_state["messages"][0]["question"], question)
+        self.assertIsNotNone(self.app.session_state["messages"][0]["result"])
+        self.assertNotIn("What changed last week?", [button.label for button in self.app.button])
+        self.app.run()
+        self.assertEqual(self.generate.call_count, 2)
 
 
 if __name__ == "__main__":
