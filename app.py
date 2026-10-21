@@ -49,22 +49,25 @@ def render_report(result, facts, sources, *, key, ranked=False):
     report = result["report"]
     if ranked:
         st.subheader("Your morning priorities")
-    else:
-        st.subheader(report["title"].replace("$", r"\$"))
     for index, item in enumerate(report["items"], 1):
-        with st.container(border=True, key=f"report_{key}_{index}"):
+        with st.container(border=ranked, key=f"{'report' if ranked else 'answer'}_{key}_{index}"):
             number = f'<span class="priority-number">{index:02}</span>' if ranked else ""
             st.html(f'<div class="priority-heading">{number}<h3>{escape(item["title"])}</h3></div>')
-            st.html(
-                '<div class="next-step"><span class="eyebrow">NEXT STEP</span>'
-                f'<p>{escape(item["next_step"])}</p></div>'
-            )
-            st.markdown(f"**Why it matters** · {item['interpretation']}".replace("$", r"\$"))
+            if ranked:
+                st.html(
+                    '<div class="next-step"><span class="eyebrow">NEXT STEP</span>'
+                    f'<p>{escape(item["next_step"])}</p></div>'
+                )
+                st.markdown(f"**Why it matters** · {item['interpretation']}".replace("$", r"\$"))
+            else:
+                st.markdown(item["interpretation"].replace("$", r"\$"))
             if item["evidence"] and not ranked:
                 st.html('<div class="eyebrow evidence-label">FROM THE RECORDS</div>')
                 st.markdown("\n".join(
                     f"{i}. {claim['text']}" for i, claim in enumerate(item["evidence"], 1)
                 ).replace("$", r"\$"))
+            if not ranked:
+                st.markdown(f"**Next step:** {item['next_step']}".replace("$", r"\$"))
             if item["unknowns"]:
                 st.html(
                     '<div class="unknowns"><strong>Still to confirm</strong><ul>'
@@ -109,7 +112,10 @@ h3 {font-size: 1.12rem !important; line-height: 1.45 !important;}
 [data-testid="stCaptionContainer"] {opacity: 1;}
 [data-testid="stCaptionContainer"] p {color: #59685e;}
 [data-testid="stExpander"] {border-color: #dfe5df;}
-[data-testid="stChatMessage"] {background: transparent; padding: 1rem 0;}
+[class*="st-key-question_turn_"] {margin-bottom: 1.5rem;}
+.question {background: #eef4ee; border-radius: 10px; padding: .8rem 1rem; margin-bottom: .5rem;}
+.question p {margin: .3rem 0 0; color: #243c2d; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere;}
+[class*="st-key-answer_"] .priority-heading {margin-bottom: 0;}
 @media (max-width: 640px) {
   [data-testid="stMainBlockContainer"] {padding: 4rem 1rem 4rem;}
   h1 {font-size: 2rem !important;}
@@ -171,9 +177,11 @@ with chat_tab:
             if st.button(label, width="stretch"):
                 suggested = prompt
     for index, turn in enumerate(st.session_state.messages):
-        with st.chat_message("user"):
-            st.write(turn["question"].replace("$", r"\$"))
-        with st.chat_message("assistant"):
+        with st.container(key=f"question_turn_{index}"):
+            st.html(
+                '<div class="question"><span class="eyebrow">YOUR QUESTION</span>'
+                f'<p>{escape(turn["question"])}</p></div>'
+            )
             if turn["revision"] != revision:
                 st.caption("Historical answer — delivery rules have changed since this question.")
             if turn["result"] is not None:
