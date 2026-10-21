@@ -1,3 +1,4 @@
+from datetime import datetime
 from decimal import Decimal
 
 import streamlit as st
@@ -13,10 +14,6 @@ SOURCE_LABELS = {
     "data/vendor_catalog.csv": "Supplier packs and units",
     "data/vendors.csv": "Supplier order sheet",
     "GM_OPS_LOG.md": "Manager notebook",
-    "SITE_PROFILE.md": "Site profile",
-    "README.md": "Reading guide",
-    "CANDIDATE_BRIEF.md": "Assignment brief",
-    "ABOUT_MARBLE.md": "About Marble",
     "source_updates": "Saved supplier messages",
 }
 
@@ -73,13 +70,17 @@ def render_sources(refs, sources):
     grouped = {}
     for ref in dict.fromkeys(refs):
         record = sources[ref]
+        if record["file"] not in SOURCE_LABELS:
+            continue
+        if record["file"] == "GM_OPS_LOG.md" and not record["id"].startswith("N"):
+            continue
         grouped.setdefault(record["file"], []).append(record)
     for filename, records in grouped.items():
         st.markdown(f"**{SOURCE_LABELS[filename]}**")
         rows = [record["content"]
                 for record in records if isinstance(record["content"], dict)]
         if rows:
-            st.caption(f"{filename} · {len(rows)} {'record' if len(rows) == 1 else 'records'} · original field values")
+            st.caption(f"{len(rows)} {'record' if len(rows) == 1 else 'records'}")
             fields = list(dict.fromkeys(field for row in rows for field in row))
             order = SOURCE_COLUMN_ORDER[filename] + [field for field in fields if field not in SOURCE_COLUMN_ORDER[filename]]
             columns = {
@@ -92,16 +93,21 @@ def render_sources(refs, sources):
             st.dataframe(rows, hide_index=True, width="stretch", column_config=columns, column_order=order)
         for record in records:
             if isinstance(record["content"], str):
-                label = f"{filename} · {record['id']}"
-                if "learned_at" in record:
-                    label += f" · Recorded {record['learned_at']}"
-                st.caption(label)
-                st.markdown(record["content"].replace("$", r"\$"))
+                content = record["content"]
+                if filename == "GM_OPS_LOG.md":
+                    heading, content = content.split("\n", 1)
+                    _, recorded_at, author = heading.split(" | ")
+                    recorded = datetime.fromisoformat(recorded_at)
+                    st.caption(f"{recorded:%B %d, %Y · %I:%M %p} · {author}")
+                else:
+                    recorded = datetime.fromisoformat(record["learned_at"])
+                    st.caption(f"Recorded {recorded:%B %d, %Y · %I:%M %p}")
+                st.markdown(content.strip().replace("$", r"\$"))
 
 
 def render_analysis(facts, sources):
     section = st.selectbox(
-        "Analysis", ["Sales", "Purchasing", "Stock reconciliation", "Restocking", "Context"],
+        "Analysis", ["Sales", "Purchasing", "Stock reconciliation", "Restocking", "Kitchen notes"],
         key="analysis_section",
     )
     if section == "Sales":
@@ -154,15 +160,15 @@ def render_analysis(facts, sources):
             _table([
                 {"Planned start": row["planned_available_from"],
                  "Sale date": row["business_date"], "Portions": row["quantity_sold"],
-                 "Sources": " · ".join(row["sources"]), "Menu ID": row["pos_item_id"]}
+                 "Menu ID": row["pos_item_id"]}
                 for row in sales["planned_availability_conflicts"]
             ])
 
     elif section == "Purchasing":
         purchasing = facts["purchasing"]
         vendor_names = {vendor["vendor_id"]: vendor["vendor_name"] for vendor in facts["delivery"]}
-        st.caption(purchasing["basis"].replace("delivery_date", "delivery date"))
-        st.info(purchasing["limitations"])
+        st.caption("Purchases by delivery date, excluding future and unconfirmed receipts. Purchase share is not actual food cost or gross margin.")
+        st.info("Opening inventory values and a complete cost ledger are missing.")
         st.markdown("**Recorded purchases by week**")
         _table([
             {"From": week["start"], "Through": week["end"], "Line purchases (USD)": week["line_purchases"],
@@ -210,7 +216,7 @@ def render_analysis(facts, sources):
             {"Delivery date": row["date"], "Supplier": vendor_names[row["vendor_id"]],
              f"Price (USD/{price['unit']})": row["unit_price"],
              "Quantity": row["normalized_quantity"], "Unit": price["unit"], "SKU": row["sku"],
-             "Vendor ID": row["vendor_id"], "Source line": row["sources"][0]}
+             "Vendor ID": row["vendor_id"], "Invoice line": row["sources"][0].split("#")[1]}
             for row in price["observations"]
         ])
         st.markdown("**Invoice exceptions**")
@@ -245,7 +251,7 @@ def render_analysis(facts, sources):
     elif section == "Stock reconciliation":
         consumption = facts["consumption"]
         st.caption(f"{consumption['period_start']} – {consumption['period_end']} · complete count interval")
-        st.info("Unexplained differences are not measured waste and do not establish an employee's responsibility.")
+        st.info("Stock differences need reconciliation; they are not measured waste.")
         _table([
             {"Ingredient": name, "Unit": row["unit"], "Opening count": row["opening"],
              "Included receipts": row["period_receipts_without_known_dispute"], "Closing count": row["closing"],
@@ -255,21 +261,20 @@ def render_analysis(facts, sources):
         ])
         st.caption(consumption["formula"])
         _missing_sales(consumption["missing_recipes"])
-        st.markdown("**What the comparison cannot establish**")
-        for limitation in consumption["limitations"]:
-            st.caption(limitation)
+        st.caption("Only opening and closing counts are available; daily and weekly usage cannot be determined.")
+        st.caption("Specials are missing recipes and discarded food was not weighed. Check receiving, recipe and waste records to explain the differences.")
 
     elif section == "Restocking":
         restocking = facts["restocking"]
         vendor_names = {vendor["vendor_id"]: vendor["vendor_name"] for vendor in facts["delivery"]}
-        st.caption(restocking["basis"])
-        index = st.radio("Demand baseline", range(len(restocking["scenarios"])), horizontal=True,
+        st.caption("Based on last week's menu sales and recorded recipes.")
+        index = st.radio("Planning period", range(len(restocking["scenarios"])), horizontal=True,
                          format_func=lambda i: {"full_week": "Full week", "weekend": "Weekend only"}[
                              restocking["scenarios"][i]["id"]], key="restocking_scenario")
         scenario = restocking["scenarios"][index]
-        st.caption(f"Scenario: {scenario['scenario_start']} – {scenario['scenario_end']} · "
-                   f"repeats {scenario['baseline_start']} – {scenario['baseline_end']}")
-        st.info("Conditional demand only. These whole-pack quantities are not confirmed orders or a forecast.")
+        st.caption(f"Plan for {scenario['scenario_start']} – {scenario['scenario_end']} · "
+                   f"Sales from {scenario['baseline_start']} – {scenario['baseline_end']}")
+        st.info("These estimates repeat last week's sales. Confirm current stock and incoming deliveries before ordering.")
         _table([
             {"Ingredient": name, "Unit": row["unit"], "Known demand": row["known_recipe_demand"],
              "Closing count": row["closing_count_quantity"], "Shortfall": row["shortfall_against_closing_count"],
@@ -279,9 +284,8 @@ def render_analysis(facts, sources):
             for name, row in scenario["ingredients"].items()
         ])
         _missing_sales(scenario["unmodeled_menu_sales"])
-        st.markdown("**Scenario limits**")
-        for limitation in restocking["limitations"]:
-            st.caption(limitation)
+        st.caption("Weekend estimates do not include intervening weekday consumption. The full-week and weekend plans should not be added together.")
+        st.caption("Quantities exclude buffer stock, changes in demand and specials without recipes. Confirm supplier availability and arrival times.")
         for receipt in restocking["unconfirmed_receipts"]:
             st.warning(f"{receipt['invoice_id']} remains excluded: {' '.join(receipt['reasons'])}")
 
@@ -290,18 +294,14 @@ def render_analysis(facts, sources):
         correction = context["breakfast_correction"]
         st.markdown("**Breakfast service**")
         st.write(f"{correction['applies_on']}: {correction['status']}")
-        st.caption(correction["scope"])
-        st.caption("Sources: " + " · ".join(correction["sources"]))
         st.markdown("**Refrigeration**")
         st.write(context["refrigeration"]["status"])
-        st.caption("Sources: " + " · ".join(context["refrigeration"]["sources"]))
-        st.markdown("**Chicken pack mapping**")
+        st.markdown("**Chicken case sizes**")
         st.write(context["sku_mapping"]["ingredient"])
         render_sources(context["sku_mapping"]["sources"], sources)
-        st.markdown("**Original notebook**")
+        st.markdown("**Manager notebook**")
         notes = context["notes"]
         index = st.selectbox("Notebook entry", range(len(notes)), index=len(notes) - 1,
-                             format_func=lambda i: notes[i]["text"].splitlines()[0].lstrip("# "),
+                             format_func=lambda i: " · ".join(notes[i]["text"].splitlines()[0].split(" | ")[1:]),
                              key="notebook_entry")
-        st.caption("Source: " + " · ".join(notes[index]["sources"]))
-        st.markdown(notes[index]["text"].replace("$", r"\$"))
+        render_sources(notes[index]["sources"], sources)

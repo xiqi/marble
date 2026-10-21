@@ -344,7 +344,7 @@ def build_facts(root: Path = Path(__file__).parent) -> tuple[dict, dict]:
         if header["status"] != "received":
             reasons.append("Source status is not received.")
         if invoice_id == "INV-099":
-            reasons.append("N15 explicitly disputes physical receipt; the office status is not confirmation.")
+            reasons.append("The manager's note disputes physical receipt; the office status is not confirmation.")
         group = f"invoice.{invoice_id}"
         evidence_sets[group] = list(dict.fromkeys(reference for line in invoice_lines[invoice_id] for reference in line["sources"]))
         if reasons:

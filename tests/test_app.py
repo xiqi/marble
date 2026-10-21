@@ -94,6 +94,49 @@ class AppTests(unittest.TestCase):
         self.app.run()
         self.assertEqual(self.generate.call_count, 3)
 
+    def test_records_and_evidence_exclude_assignment_material_and_generation_details(self):
+        def report_with_internal_context(*args):
+            result = self.report(*args)
+            result["report"]["items"][0]["evidence"][0]["sources"].extend([
+                "SITE_PROFILE.md#time-context", "README.md#reading-the-exports",
+            ])
+            return result
+
+        self.generate.side_effect = report_with_internal_context
+        self.app.run()
+        self.assertEqual(len(self.app.exception), 0)
+        collection = next(widget for widget in self.app.selectbox if widget.label == "Record collection")
+        self.assertCountEqual(collection.options, [
+            "Sales transactions", "Invoice headers", "Invoice lines", "Inventory counts",
+            "Menu", "Recipe cards", "Supplier packs and units", "Supplier order sheet", "Manager notebook",
+        ])
+        sources = self.generate.call_args.args[1]
+        files = list(dict.fromkeys(
+            record["file"] for record in sources.values()
+            if record["file"].endswith(".csv") or record["file"] == "GM_OPS_LOG.md"
+        ))
+        for filename in files:
+            with self.subTest(collection=filename):
+                collection.set_value(filename).run()
+                self.assertEqual(len(self.app.exception), 0)
+                collection = next(widget for widget in self.app.selectbox if widget.label == "Record collection")
+                displayed = "\n".join(
+                    [item.value for item in [*self.app.markdown, *self.app.caption, *self.app.info, *self.app.warning]]
+                    + [item.label for item in self.app.expander]
+                    + [option for widget in self.app.selectbox for option in widget.options]
+                )
+                for internal_text in [
+                    "SITE_PROFILE.md", "README.md", "CANDIDATE_BRIEF.md", "ABOUT_MARBLE.md",
+                    "Use this as", "candidate packet", "entirely fictional", "Generation details",
+                    "mock-model", "input tokens", "output tokens", "Working snapshot",
+                ]:
+                    self.assertNotIn(internal_text, displayed)
+        history = next(expander for expander in self.app.expander if expander.label.startswith("Schedule history"))
+        self.assertFalse({"Source", "Rule ID", "Replaces"} & set(history.dataframe[0].value.columns))
+        self.assertEqual(self.app.session_state["brief"]["model"], "mock-model")
+        self.assertEqual(self.app.session_state["brief"]["usage"]["input_tokens"], 100)
+        self.generate.assert_called_once()
+
     def test_calculation_choices_follow_the_analysis_and_keep_all_groups_accessible(self):
         self.app.run()
         groups = self.generate.call_args.args[0]["evidence_sets"]
@@ -121,9 +164,9 @@ class AppTests(unittest.TestCase):
                 visited.update(expected)
         self.assertEqual(visited, set(groups))
 
-        self.app.selectbox(key="analysis_section").set_value("Context").run()
+        self.app.selectbox(key="analysis_section").set_value("Kitchen notes").run()
         self.assertNotIn("Calculation", [widget.label for widget in self.app.selectbox])
-        self.assertNotIn("Trace a calculation to its inputs", [expander.label for expander in self.app.expander])
+        self.assertNotIn("Supporting records", [expander.label for expander in self.app.expander])
         self.assertIn("Record collection", [widget.label for widget in self.app.selectbox])
         self.generate.assert_called_once()
 
@@ -137,7 +180,8 @@ class AppTests(unittest.TestCase):
         self.assertEqual(turn["question"], "Why did purchases change?")
         self.assertIsNone(turn["result"])
         self.assertEqual(turn["error"], "Simulated API failure")
-        self.assertIn("Simulated API failure", [item.value for item in self.app.error])
+        self.assertIn("Your question could not be answered. Please try again.", [item.value for item in self.app.error])
+        self.assertNotIn("Simulated API failure", [item.value for item in self.app.error])
         self.app.run()
         self.assertEqual(self.generate.call_count, 2)
         self.generate.side_effect = self.report
@@ -159,7 +203,8 @@ class AppTests(unittest.TestCase):
             "Your records and delivery rules are still available" in item.value
             for item in self.app.error
         ))
-        self.assertIn("Simulated morning API failure", [item.value for item in self.app.caption])
+        self.assertEqual(self.app.session_state["brief_error"], "Simulated morning API failure")
+        self.assertNotIn("Simulated morning API failure", [item.value for item in self.app.caption])
         self.app.run()
         self.assertEqual(self.generate.call_count, 1)
         self.generate.side_effect = self.report
@@ -214,6 +259,7 @@ class AppTests(unittest.TestCase):
             for element in self.app.markdown
         ))
         self.assertIn("source_updates#UPD-001", self.generate.call_args.args[1])
+        self.assertIn("Delivery update saved. Your morning brief has been updated.", [item.value for item in self.app.success])
         self.assertNotEqual(self.app.session_state["brief_revision"], old_revision)
         self.assertTrue(any(
             "Historical answer — delivery rules have changed" in caption.value
@@ -260,9 +306,8 @@ class AppTests(unittest.TestCase):
         details = next(
             expander for expander in self.app.expander
             if expander.label.startswith("Schedule details & sources")
-            and any("GM_OPS_LOG.md · N09" in item.value for item in expander.caption)
+            and any("Alder rep confirmed the route changes" in item.value for item in expander.markdown)
         )
-        self.assertTrue(any("source_updates · UPD-001" in item.value for item in details.caption))
         self.assertIn(message, [item.value for item in details.markdown])
         self.assertTrue(any("**Monday, Wednesday**" in item.value for item in details.markdown))
         self.assertTrue(any("**Monday, Thursday**" in item.value for item in details.markdown))
@@ -303,7 +348,6 @@ class AppTests(unittest.TestCase):
                 for table in expander.dataframe
             )
         )
-        self.assertTrue(any("source_updates · UPD-001" in item.value for item in details.caption))
         self.assertIn(message, [item.value for item in details.markdown])
         self.assertTrue(any("**Monday, Wednesday, Friday**" in item.value for item in details.markdown))
         self.assertTrue(any("**Tuesday**" in item.value for item in details.markdown))
@@ -485,6 +529,23 @@ class AppTests(unittest.TestCase):
                     self.assertEqual(connection.execute("SELECT COUNT(*) FROM source_updates").fetchone()[0], 0)
                     self.assertEqual(connection.execute("SELECT COUNT(*) FROM delivery_rules").fetchone()[0], original_rule_count)
                 self.generate.assert_called_once()
+
+    def test_storage_failure_preserves_the_draft_without_exposing_database_details(self):
+        self.app.run()
+        self.app.radio(key="update_kind").set_value("Confirmed correction")
+        message = "Alder confirms Monday and Thursday deliveries."
+        self.app.text_area(key="update_message").set_value(message)
+        self.app.multiselect(key="update_weekdays").set_value(["Monday", "Thursday"])
+        detail = "database write failed at /private/storage/memory.sqlite3"
+        with patch("memory.save_rule", side_effect=sqlite3.OperationalError(detail)):
+            next(button for button in self.app.button if button.label == "Save delivery update").click().run()
+
+        self.assertEqual(len(self.app.exception), 0)
+        self.assertEqual(self.app.session_state["delivery_error"], detail)
+        self.assertEqual(self.app.text_area(key="update_message").value, message)
+        self.assertIn("The delivery update could not be saved. Please try again.", [item.value for item in self.app.error])
+        self.assertNotIn(detail, [item.value for item in self.app.error])
+        self.generate.assert_called_once()
 
     def test_example_question_uses_the_chat_flow_once(self):
         self.app.run()

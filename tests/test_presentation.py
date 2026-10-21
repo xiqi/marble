@@ -6,7 +6,7 @@ from unittest.mock import patch
 from streamlit.testing.v1 import AppTest
 
 from analysis import build_facts
-from presentation import render_analysis, render_sources
+from presentation import SOURCE_LABELS, render_analysis, render_sources
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -18,7 +18,7 @@ class PresentationTests(unittest.TestCase):
         cls.facts, cls.sources = build_facts(ROOT)
         cls.facts["delivery"] = [record["content"] for record in cls.sources.values() if record["file"] == "data/vendors.csv"]
 
-    def test_source_tables_keep_every_original_field_and_note(self):
+    def test_business_records_preserve_values_without_exposing_instructions(self):
         original = copy.deepcopy(self.sources)
         with patch("presentation.st") as ui:
             render_sources(list(self.sources), self.sources)
@@ -46,10 +46,17 @@ class PresentationTests(unittest.TestCase):
         captions = [call.args[0] for call in ui.caption.call_args_list]
         markdown = [call.args[0] for call in ui.markdown.call_args_list]
         for record in self.sources.values():
-            self.assertTrue(any(record["file"] in caption for caption in captions))
-            if isinstance(record["content"], str):
-                self.assertIn(f"{record['file']} · {record['id']}", captions)
-                self.assertIn(record["content"].replace("$", r"\$"), markdown)
+            self.assertFalse(any(record["file"] in caption for caption in captions))
+            if record["file"] not in SOURCE_LABELS:
+                self.assertNotIn(record["content"].replace("$", r"\$"), markdown)
+            elif record["file"] == "GM_OPS_LOG.md" and record["id"].startswith("N"):
+                body = record["content"].split("\n", 1)[1].strip()
+                self.assertIn(body.replace("$", r"\$"), markdown)
+        visible = "\n".join(captions + markdown)
+        for private_text in ["Time context", "Use this as", "candidate packet", "entirely fictional",
+                             "2–4 hour", "CANDIDATE_BRIEF", "ABOUT_MARBLE", "SITE_PROFILE", "README.md"]:
+            self.assertNotIn(private_text, visible)
+        self.assertIn("September 25, 2026 · 04:45 PM · Maya", captions)
         ui.json.assert_not_called()
         ui.selectbox.assert_not_called()
         self.assertEqual(self.sources, original)
@@ -65,7 +72,17 @@ class PresentationTests(unittest.TestCase):
             render_sources([ref, ref, "source_updates#UPD-001"], sources)
         self.assertEqual(ui.dataframe.call_args.args[0], [sources[ref]["content"]])
         ui.markdown.assert_any_call(update["content"])
-        self.assertTrue(any(update["learned_at"] in call.args[0] for call in ui.caption.call_args_list))
+        ui.caption.assert_any_call("Recorded October 05, 2026 · 05:00 AM")
+        self.assertFalse(any("UPD-001" in call.args[0] for call in ui.caption.call_args_list))
+
+    def test_instruction_documents_stay_hidden_when_cited_directly(self):
+        refs = ["SITE_PROFILE.md#time-context", "SITE_PROFILE.md#kitchen-conventions",
+                "README.md#reading-the-exports"]
+        with patch("presentation.st") as ui:
+            render_sources(refs, self.sources)
+        ui.markdown.assert_not_called()
+        ui.caption.assert_not_called()
+        ui.dataframe.assert_not_called()
 
     def test_analysis_views_render_real_values_and_limits_without_json(self):
         app = AppTest.from_string(
@@ -113,7 +130,7 @@ class PresentationTests(unittest.TestCase):
         self.assertEqual(excluded["Invoice date"], "2026-10-04")
         self.assertEqual(excluded["Delivery date"], "2026-10-06")
         self.assertIn("physical receipt", excluded["Why excluded"])
-        self.assertTrue(any("Not COGS" in caption.value for caption in app.caption))
+        self.assertTrue(any("not actual food cost" in caption.value for caption in app.caption))
         self.assertTrue(any("— means there is no nonzero prior value" in caption.value for caption in app.caption))
         self.assertEqual(len(app.json), 0)
 
@@ -148,9 +165,9 @@ class PresentationTests(unittest.TestCase):
         self.assertTrue(any("INV-099" in warning.value for warning in app.warning))
         self.assertEqual(len(app.json), 0)
 
-        app.selectbox(key="analysis_section").set_value("Context").run()
+        app.selectbox(key="analysis_section").set_value("Kitchen notes").run()
         self.assertEqual(len(app.exception), 0)
-        self.assertTrue(any("not an open-ended cancellation" in caption.value for caption in app.caption))
+        self.assertTrue(any("2026-10-03: Breakfast restored" in item.value for item in app.markdown))
         self.assertTrue(any("have not seen the cases" in markdown.value for markdown in app.markdown))
         packs = [row for table in app.dataframe for row in table.value.to_dict("records")]
         self.assertEqual(
@@ -161,7 +178,9 @@ class PresentationTests(unittest.TestCase):
         self.assertFalse(any(caption.value.startswith("Catalog rows:") for caption in app.caption))
         app.selectbox(key="notebook_entry").set_value(13).run()
         self.assertTrue(any("Breakfast tacos ON today" in markdown.value for markdown in app.markdown))
-        self.assertTrue(any("GM_OPS_LOG.md#N14" in caption.value for caption in app.caption))
+        self.assertTrue(any("October 03, 2026 · 08:15 AM · Maya" in caption.value for caption in app.caption))
+        for item in [*app.caption, *app.markdown]:
+            self.assertNotIn("GM_OPS_LOG.md", item.value)
         self.assertEqual(len(app.json), 0)
 
     def test_analysis_displays_supplied_results_without_recalculating_or_mutating(self):

@@ -49,7 +49,6 @@ def render_report(result, facts, sources, *, key, ranked=False):
     report = result["report"]
     if ranked:
         st.subheader("Your morning priorities")
-        st.caption(f"{len(report['items'])} items, ranked for this morning's ordering decisions.")
     else:
         st.subheader(report["title"].replace("$", r"\$"))
     for index, item in enumerate(report["items"], 1):
@@ -86,14 +85,7 @@ def render_report(result, facts, sources, *, key, ranked=False):
                         key=f"sources_{key}_{index}",
                     )
                     refs = resolve_sources(item["evidence"][selected]["sources"], facts, sources)
-                    st.caption(f"{len(refs)} original {'record' if len(refs) == 1 else 'records'} · complete sources for this observation.")
                     render_sources(refs, sources)
-    with st.expander(f"Generation details · estimated ${result['estimated_cost_usd']:.4f}"):
-        st.caption(f"Model: {result['model']} · Costs are estimates, not billing confirmation.")
-        st.write(
-            f"{result['usage']['input_tokens']:,} input tokens · "
-            f"{result['usage']['output_tokens']:,} output tokens"
-        )
 
 
 st.set_page_config(page_title="Lantern Yard · Operations", page_icon="☀", layout="wide")
@@ -129,8 +121,8 @@ h3 {font-size: 1.12rem !important; line-height: 1.45 !important;}
 <div class="eyebrow">LANTERN YARD KITCHEN · OPERATIONS</div>
 """)
 st.title("Morning operations")
-st.caption("Working snapshot · Monday, October 5, 2026 · 6:00 AM New York")
-st.caption("Records: September 14–October 4 · Stock: October 4 closing count, not live inventory")
+st.caption("Monday, October 5, 2026 · 6:00 AM New York")
+st.caption("Records: September 14–October 4 · Last inventory count: October 4 after closing")
 
 db_path = Path(os.environ.get("MARBLE_DB_PATH", str(ROOT / ".local" / "memory.sqlite3")))
 initialize(db_path)
@@ -160,14 +152,13 @@ with brief_tab:
         render_report(st.session_state.brief, facts, sources, key="brief", ranked=True)
     else:
         st.error("The morning brief could not be generated. Your records and delivery rules are still available.")
-        st.caption(st.session_state.brief_error)
         if st.button("Retry morning brief"):
             st.session_state.brief_revision = None
             st.rerun()
 
 with chat_tab:
     st.subheader("Ask about your operation")
-    st.caption("Answers use the supplied records. Ask a follow-up to keep the conversation going.")
+    st.caption("Ask about sales, stock, purchasing or deliveries.")
     suggested = None
     if not st.session_state.messages:
         st.markdown("Start with a question")
@@ -179,7 +170,6 @@ with chat_tab:
         for label, prompt in questions.items():
             if st.button(label, width="stretch"):
                 suggested = prompt
-        st.caption("Covers weekly sales, purchase prices, stock differences and repeat-last-week demand scenarios. Custom date ranges and forecasts are not calculated.")
     for index, turn in enumerate(st.session_state.messages):
         with st.chat_message("user"):
             st.write(turn["question"].replace("$", r"\$"))
@@ -189,7 +179,7 @@ with chat_tab:
             if turn["result"] is not None:
                 render_report(turn["result"], facts, sources, key=f"chat_{index}")
             else:
-                st.error(turn["error"])
+                st.error("Your question could not be answered. Please try again.")
                 if st.button("Retry this answer", key=f"retry_{index}"):
                     st.session_state.retry_question = index
                     st.rerun()
@@ -224,14 +214,14 @@ with chat_tab:
 
 with delivery_tab:
     st.subheader("Delivery & ordering")
-    st.caption("All times are New York time. A recorded route is not a confirmed order or arrival.")
+    st.caption("All times are New York time.")
     saved_update = st.session_state.pop("saved_delivery_update", None)
     if saved_update:
         clear_delivery_draft()
         if st.session_state.brief is not None:
-            st.success(f"Delivery update {saved_update} saved. Your morning brief has been updated.")
+            st.success("Delivery update saved. Your morning brief has been updated.")
         else:
-            st.warning(f"Delivery update {saved_update} saved. The brief could not be refreshed; retry it in Morning brief.")
+            st.warning("Delivery update saved. The brief could not be refreshed; retry it in Morning brief.")
     for vendor in memory["vendors"]:
         with st.container(border=True):
             st.subheader(vendor["vendor_name"])
@@ -253,7 +243,7 @@ with delivery_tab:
                 days, cutoff_text = rule_summary(rule)
                 st.markdown(f"**{days}** · {cutoff_text}")
             if vendor["today_is_delivery"]:
-                st.caption("Today is a scheduled delivery day. Check existing orders and physical arrivals separately.")
+                st.caption("Scheduled today. Confirm your order and arrival time with the supplier.")
             rules = {rule["id"]: rule for rule in [*vendor["rules"], *vendor["upcoming_rules"]]}
             with st.expander(f"Schedule details & sources · {len(rules)} recorded {'rule' if len(rules) == 1 else 'rules'}"):
                 for rule in rules.values():
@@ -276,7 +266,7 @@ with delivery_tab:
         kind = st.radio(
             "Message type", ["Confirmed correction", "Unresolved conflicting message"],
             index=None, key="update_kind",
-            captions=["Replace overlapping rules with this confirmed information.", "Keep both versions until the supplier confirms which is correct."],
+            captions=["Update the schedule with confirmed information.", "Keep both messages until the supplier confirms the schedule."],
         )
         source_text = st.text_area("Original supplier message", key="update_message", placeholder="Paste or transcribe the supplier's exact message…")
         weekdays = st.multiselect("Delivery days", WEEKDAYS, key="update_weekdays")
@@ -287,7 +277,7 @@ with delivery_tab:
             lead_days = lead_col.number_input("Days before delivery", min_value=0, max_value=7, value=None, step=1, key="update_lead_days", placeholder="0 = delivery day, 1 = day before")
             cutoff = time_col.time_input("Cutoff time · New York", value=None, key="update_cutoff_time")
         else:
-            st.caption("The cutoff will remain unknown. No ordering deadline will be invented.")
+            st.caption("Order cutoff not recorded.")
         start = st.date_input("Effective from", value=date(2026, 10, 5), key="update_start")
         expires = st.checkbox("This is a temporary rule", key="update_expires")
         end = st.date_input("Last day this rule applies", value=max(start, date(2026, 10, 11)), key="update_end") if expires else None
@@ -307,14 +297,16 @@ with delivery_tab:
                     source_text=source_text,
                     kind="correction" if kind == "Confirmed correction" else "conflict",
                 )
-            except (ValueError, sqlite3.Error) as exc:
+            except ValueError as exc:
                 st.error(f"Update not saved: {exc}")
+            except sqlite3.Error as exc:
+                st.session_state.delivery_error = str(exc)
+                st.error("The delivery update could not be saved. Please try again.")
             else:
                 st.session_state.saved_delivery_update = update_id
                 st.rerun()
 
-    with st.expander(f"Rule history · {len(memory['history'])} recorded versions"):
-        st.caption("Earlier versions stay available as evidence. Recorded time and effective dates describe different things.")
+    with st.expander(f"Schedule history · {len(memory['history'])} updates"):
         rows = []
         for rule in reversed(memory["history"]):
             days, cutoff_text = rule_summary(rule)
@@ -322,13 +314,11 @@ with delivery_tab:
                 "Supplier": rule["vendor_name"], "Delivery days": days, "Order cutoff": cutoff_text,
                 "Applies now": "Yes" if rule["active"] else "No", "Effective from": rule["effective_from"],
                 "Effective through": rule["effective_to"] or "No end date", "Recorded": rule["learned_at"],
-                "Source": rule["source_ref"], "Rule ID": rule["id"],
-                "Replaces": ", ".join(rule["supersedes"]) or "None",
             })
         st.dataframe(rows, hide_index=True, width="stretch")
         history_rule = st.selectbox(
-            "Read a version's original source", list(reversed(memory["history"])),
-            format_func=lambda rule: f"{rule['vendor_name']} · effective {rule['effective_from']} · {rule['source_ref'].split('#')[-1]}",
+            "Schedule record", list(reversed(memory["history"])),
+            format_func=lambda rule: f"{rule['vendor_name']} · effective {rule['effective_from']} · recorded {rule['learned_at']}",
         )
         render_sources([history_rule["source_ref"]], sources)
 
@@ -347,11 +337,11 @@ with records_tab:
             "Sales": ("sales.",),
             "Purchasing": ("purchasing.", "invoice."),
             "Stock reconciliation": ("consumption.", "missing_recipes.whole_period."),
-            "Context": (),
+            "Kitchen notes": (),
         }[section]
     groups = [name for prefix in prefixes for name in facts["evidence_sets"] if name.startswith(prefix)]
     if groups:
-        with st.expander("Trace a calculation to its inputs", icon=":material/account_tree:"):
+        with st.expander("Supporting records", icon=":material/description:"):
             labels = {
                 "sales": "Sales", "purchasing": "Purchases", "change": "Change", "ingredient": "Ingredient",
                 "vendor": "Supplier", "prices": "Unit prices", "consumption": "Stock reconciliation",
@@ -368,7 +358,7 @@ with records_tab:
             render_sources(facts["evidence_sets"][group], sources)
     st.divider()
     st.subheader("Original records")
-    files = list(dict.fromkeys(record["file"] for record in sources.values()))
+    files = list(dict.fromkeys(record["file"] for record in sources.values() if record["file"] in SOURCE_LABELS))
     filename = st.selectbox("Record collection", files, format_func=SOURCE_LABELS.__getitem__)
     refs = [ref for ref, record in sources.items() if record["file"] == filename]
     render_sources(refs, sources)
