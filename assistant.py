@@ -8,7 +8,7 @@ from openai import OpenAI
 from pydantic import BaseModel, Field, create_model
 
 ROOT = Path(__file__).resolve().parent
-MODEL = "gpt-5.4-2026-03-05"
+MODEL = "gpt-6-astra"
 
 
 class Claim(BaseModel):
@@ -221,9 +221,10 @@ def generate(facts: dict, sources: dict, question: str | None = None,
             resolve_sources(claim.sources, facts, sources)
     usage = response.usage
     cached = usage.input_tokens_details.cached_tokens
+    written = usage.input_tokens_details.cache_write_tokens
     estimated_cost = (
-        (usage.input_tokens - cached) * 2.50
-        + cached * 0.25 + usage.output_tokens * 15.00
+        (usage.input_tokens - cached - written) * 10.00
+        + cached * 1.00 + written * 12.50 + usage.output_tokens * 50.00
     ) / 1_000_000
     return {
         "report": report.model_dump(),

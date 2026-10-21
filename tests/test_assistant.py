@@ -31,7 +31,8 @@ class AssistantTests(unittest.TestCase):
     @patch("assistant.OpenAI")
     def test_one_request_no_retry_and_current_facts_with_history(self, sdk):
         usage = SimpleNamespace(input_tokens=1000,
-                                input_tokens_details=SimpleNamespace(cached_tokens=100),
+                                input_tokens_details=SimpleNamespace(cached_tokens=100,
+                                                                     cache_write_tokens=200),
                                 output_tokens=100)
         usage.model_dump = lambda: {"input_tokens": 1000, "output_tokens": 100}
         parse = sdk.return_value.__enter__.return_value.responses.parse
@@ -42,6 +43,8 @@ class AssistantTests(unittest.TestCase):
         result = generate(self.facts, self.sources, "What changed?", [
             {"role": "assistant", "content": "Historical answer under older rules."}])
         parse.assert_called_once()
+        self.assertEqual(parse.call_args.kwargs["model"], "gpt-6-astra")
+        self.assertEqual(parse.call_args.kwargs["reasoning"], {"effort": "high"})
         self.assertEqual(sdk.call_args.kwargs["max_retries"], 0)
         self.assertFalse(parse.call_args.kwargs["store"])
         self.assertNotIn("tools", parse.call_args.kwargs)
@@ -52,7 +55,7 @@ class AssistantTests(unittest.TestCase):
         )
         self.assertIn("APP_ANALYSIS", result["request"][1]["content"])
         self.assertEqual(result["request"][-1]["content"], "What changed?")
-        self.assertEqual(result["estimated_cost_usd"], 0.003775)
+        self.assertEqual(result["estimated_cost_usd"], 0.0146)
 
     @patch.dict(os.environ, {"OPENAI_API_KEY": "test-not-a-real-key"})
     @patch("assistant.OpenAI")
